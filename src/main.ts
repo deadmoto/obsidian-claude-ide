@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import * as crypto from 'node:crypto';
 import { Plugin, WorkspaceLeaf } from 'obsidian';
 import { deleteLockFile, writeLockFile } from './discovery';
 import { EditorStateAdapter } from './editor-state';
@@ -84,7 +84,7 @@ export default class ClaudeIdePlugin extends Plugin {
       throw new Error('No active vault to start bridge');
     }
 
-    const token = randomBytes(32).toString('hex');
+    const token = crypto.randomBytes(32).toString('hex');
     const bridge = new WsAdapter(
       {
         authToken: token,

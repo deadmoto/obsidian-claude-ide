@@ -1,6 +1,7 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { EditorStateAdapter } from './editor-state';
 import { SelectionPayload } from './bridge/types';
+import { findFreePort } from './bridge/net';
 import path from 'node:path';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';
@@ -55,8 +56,9 @@ export class WsAdapter {
       return this.wsPort;
     }
 
+    const port = await findFreePort();
     const wsOptions = {
-      port: 0,
+      port,
       host: '127.0.0.1',
       handleProtocols: (protocols: Set<string>) => {
         if (protocols.has('mcp')) {

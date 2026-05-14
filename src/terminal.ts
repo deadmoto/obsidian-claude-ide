@@ -1,5 +1,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
+import { PTY_BRIDGE_SCRIPT } from './terminal/pty-bridge-script';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 export interface PtyProcess {
@@ -14,11 +17,19 @@ export interface PtyProcess {
  * Launches a Python PTY bridge with 4 stdio pipes (stdin, stdout, stderr, extra).
  */
 export function spawnPtyProcess(scriptPath: string): PtyProcess | null {
-  if (!scriptPath || !fs.existsSync(scriptPath)) {
+  let resolvedScriptPath = scriptPath;
+
+  if (!resolvedScriptPath || !fs.existsSync(resolvedScriptPath)) {
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claude-ide-pty-'));
+    resolvedScriptPath = path.join(tempDir, 'pty-bridge.py');
+    fs.writeFileSync(resolvedScriptPath, PTY_BRIDGE_SCRIPT, 'utf8');
+  }
+
+  if (!fs.existsSync(resolvedScriptPath)) {
     return null;
   }
 
-  const child = spawn('python3', [scriptPath, '--session-id', randomUUID()], {
+  const child = spawn('python3', [resolvedScriptPath, '--session-id', randomUUID()], {
     stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
     env: {
       ...process.env,

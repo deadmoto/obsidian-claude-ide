@@ -25,6 +25,26 @@ export interface LockFileData {
   authToken: string;
 }
 
+export async function ensureIdeDir(): Promise<string> {
+  await ensureDirectoryMode700(getLockDir());
+  return getLockDir();
+}
+
+export function getLockDir(): string {
+  return lockDirectory();
+}
+
+function resolveLockPath(port: number): string {
+  return path.join(getLockDir(), `${port}.lock`);
+}
+
+export function getLockFilePath(port: number): string {
+  return resolveLockPath(port);
+}
+
+export function getLockPath(port: number): string {
+  return resolveLockPath(port);
+}
 
 export async function ensureDirectoryMode700(dirPath: string): Promise<void> {
   try {
@@ -33,14 +53,6 @@ export async function ensureDirectoryMode700(dirPath: string): Promise<void> {
     // handled by caller.
   }
   await fs.chmod(dirPath, 0o700);
-}
-
-export function getLockDir(): string {
-  return lockDirectory();
-}
-
-export function getLockPath(port: number): string {
-  return path.join(getLockDir(), `${port}.lock`);
 }
 
 export async function listLockPaths(): Promise<string[]> {
@@ -59,7 +71,7 @@ export async function listLockPaths(): Promise<string[]> {
 export async function writeLockFile(port: number, data: { workspaceFolders: string[]; authToken: string; pid?: number }): Promise<string> {
   await cleanStaleLocks();
 
-  await ensureDirectoryMode700(getLockDir());
+  await ensureIdeDir();
   const payload: LockFileData = {
     workspaceFolders: data.workspaceFolders,
     pid: data.pid ?? process.pid,
@@ -68,7 +80,7 @@ export async function writeLockFile(port: number, data: { workspaceFolders: stri
     authToken: data.authToken
   };
 
-  const lockPath = getLockPath(port);
+  const lockPath = resolveLockPath(port);
   const handle = await fs.open(lockPath, 'w', 0o600);
   await handle.writeFile(JSON.stringify(payload, null, 2), 'utf8');
   await handle.close();
@@ -76,7 +88,7 @@ export async function writeLockFile(port: number, data: { workspaceFolders: stri
 }
 
 export async function deleteLockFile(port: number): Promise<void> {
-  await fs.unlink(getLockPath(port)).catch(() => undefined);
+  await fs.unlink(resolveLockPath(port)).catch(() => undefined);
 }
 
 export async function readLockFile(lockPath: string): Promise<LockFileData | null> {
