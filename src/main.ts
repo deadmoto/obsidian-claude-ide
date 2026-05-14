@@ -1,0 +1,152 @@
+import { randomBytes } from 'node:crypto';
+import { Plugin, WorkspaceLeaf } from 'obsidian';
+import { DiscoveryManager } from './discovery';
+import { EditorStateAdapter } from './editor-state';
+import { WsAdapter } from './ws-adapter';
+import { ClaudeIdeSettingTab, ClaudeIdeSettings, CLAUDE_IDE_DEFAULT_SETTINGS } from './settings';
+import { TerminalView, TERMINAL_VIEW_TYPE, openTerminalInLeaf } from './terminal-view';
+
+export default class ClaudeIdePlugin extends Plugin {
+  settings: ClaudeIdeSettings = CLAUDE_IDE_DEFAULT_SETTINGS;
+  private discovery = new DiscoveryManager((message) => this.log(message));
+  private bridge: WsAdapter | null = null;
+  private adapter: EditorStateAdapter | null = null;
+  private running = false;
+
+  async onload(): Promise<void> {
+    await this.loadSettings();
+    this.adapter = new EditorStateAdapter(this.app, this.settings);
+
+    this.adapter.updateSettings(this.settings);
+    this.addSettingTab(new ClaudeIdeSettingTab(this.app, this));
+    this.registerView(TERMINAL_VIEW_TYPE, (leaf) => new TerminalView(leaf));
+
+    this.addCommand({
+      id: 'open-claude-in-integrated-terminal',
+      name: 'Claude IDE: Open Claude in Integrated Terminal',
+      callback: () => {
+        const leaf = this.app.workspace.getLeaf('tab');
+        openTerminalInLeaf(leaf);
+      }
+    });
+
+    this.registerEvent(
+      (this.app.workspace as any).on('active-leaf-change', (leaf: WorkspaceLeaf) => {
+        this.adapter?.setActiveLeaf(leaf);
+        this.bridge?.emitResourcesListChanged();
+      })
+    );
+
+    this.adapter.on('selection/changed', (payload) => {
+      this.bridge?.emitSelectionChanged(payload as any);
+    });
+
+      this.adapter.on('resources/listChanged', () => {
+      this.bridge?.emitResourcesListChanged();
+    });
+
+    this.adapter.on('resources/updated', (uri: string) => {
+      this.bridge?.emitResourceUpdated(uri);
+    });
+
+    this.registerEvent(
+      (this.app.workspace as any).on('quit', () => {
+        this.stopBridge().catch(() => undefined);
+      })
+    );
+
+    if (this.settings.autoStartBridge) {
+      await this.startBridge();
+    }
+  }
+
+  onunload(): void {
+    this.stopBridge().catch(() => undefined);
+  }
+
+  async loadSettings(): Promise<void> {
+    const loaded = await this.loadData();
+    this.settings = Object.assign({}, CLAUDE_IDE_DEFAULT_SETTINGS, loaded ?? {});
+  }
+
+  async saveSettings(): Promise<void> {
+    await this.saveData(this.settings);
+  }
+
+  isBridgeRunning(): boolean {
+    return this.running && this.bridge?.isStarted() === true;
+  }
+
+  async startBridge(): Promise<void> {
+    if (this.running || this.bridge) {
+      return;
+    }
+
+    const adapter = this.ensureAdapter();
+    await adapter.warmCache();
+    const workspaceFolder = adapter.getWorkspaceFolderPath();
+    if (!workspaceFolder) {
+      throw new Error('No active vault to start bridge');
+    }
+
+    const token = randomBytes(32).toString('hex');
+    const bridge = new WsAdapter(
+        {
+          authToken: token,
+          workspaceFolder
+        },
+      adapter,
+      (message) => this.log(message)
+    );
+
+    try {
+      const port = await bridge.start();
+      await this.discovery.start(port, {
+        workspaceFolders: [workspaceFolder],
+        authToken: token
+      });
+
+      this.bridge = bridge;
+      this.adapter?.startTracking();
+      this.running = true;
+
+      this.bridge.emitResourcesListChanged();
+      this.bridge.emitSelectionChanged(adapter.getSelectionPayload());
+
+      if (this.settings.autoLaunchClaudeWithIde) {
+        this.log('autoLaunchClaudeWithIde enabled, launch command not wired in this implementation yet.');
+      }
+    } catch (error) {
+      await bridge.stop();
+      await this.discovery.stop(bridge.port).catch(() => undefined);
+      throw error;
+    }
+  }
+
+  async stopBridge(): Promise<void> {
+    if (!this.bridge) {
+      return;
+    }
+    const bridge = this.bridge;
+    const port = bridge.port;
+    this.bridge = null;
+    this.running = false;
+    this.ensureAdapter().stopTracking();
+
+    await bridge.stop().catch(() => undefined);
+    await this.discovery.stop(port).catch(() => undefined);
+  }
+
+  private log(message: string): void {
+    if (this.settings.debugLogging) {
+      console.log(`[Claude IDE] ${message}`);
+    }
+  }
+
+  private ensureAdapter(): EditorStateAdapter {
+    if (!this.adapter) {
+      throw new Error('Editor adapter is not initialized yet');
+    }
+    return this.adapter;
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "claude-ide",
+  "name": "Claude IDE",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Expose the active Obsidian file and selection to Claude Code via MCP over a local WebSocket bridge.",
+  "author": "OpenClaw",
+  "authorUrl": "https://openclaw.ai",
+  "isDesktopOnly": true
+}

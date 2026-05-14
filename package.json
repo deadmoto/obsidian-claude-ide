@@ -1,0 +1,32 @@
+{
+  "name": "obsidian-claude-ide",
+  "version": "0.1.0",
+  "description": "Obsidian desktop plugin exposing the active markdown context to Claude Code over MCP over WebSocket.",
+  "author": "deadmoto",
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "build:watch": "node esbuild.config.mjs --watch",
+    "test": "vitest run",
+    "test:unit": "vitest run tests/unit",
+    "test:e2e": "vitest run tests/e2e",
+    "playwright": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "obsidian": "^1.6.7",
+    "ws": "^8.18.0",
+    "xterm": "^5.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.2",
+    "@types/ws": "^8.5.12",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.8.3",
+    "vitest": "^2.1.1",
+    "playwright": "^1.50.0"
+  },
+  "private": true
+}
