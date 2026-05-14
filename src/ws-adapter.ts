@@ -1,5 +1,6 @@
 import { WebSocket, WebSocketServer } from 'ws';
-import { EditorStateAdapter, SelectionPayload } from './editor-state';
+import { EditorStateAdapter } from './editor-state';
+import { SelectionPayload } from './bridge/types';
 import path from 'node:path';
 
 const MCP_PROTOCOL_VERSION = '2024-11-05';

@@ -1,14 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { Plugin, WorkspaceLeaf } from 'obsidian';
-import { DiscoveryManager } from './discovery';
+import { deleteLockFile, writeLockFile } from './discovery';
 import { EditorStateAdapter } from './editor-state';
 import { WsAdapter } from './ws-adapter';
-import { ClaudeIdeSettingTab, ClaudeIdeSettings, CLAUDE_IDE_DEFAULT_SETTINGS } from './settings';
-import { TerminalView, TERMINAL_VIEW_TYPE, openTerminalInLeaf } from './terminal-view';
+import { ClaudeIdeSettingTab, ClaudeIdeSettings, DEFAULT_SETTINGS } from './settings';
+import { TERMINAL_VIEW_TYPE, TerminalView } from './terminal-view';
 
 export default class ClaudeIdePlugin extends Plugin {
-  settings: ClaudeIdeSettings = CLAUDE_IDE_DEFAULT_SETTINGS;
-  private discovery = new DiscoveryManager((message) => this.log(message));
+  settings: ClaudeIdeSettings = DEFAULT_SETTINGS;
   private bridge: WsAdapter | null = null;
   private adapter: EditorStateAdapter | null = null;
   private running = false;
@@ -24,9 +23,13 @@ export default class ClaudeIdePlugin extends Plugin {
     this.addCommand({
       id: 'open-claude-in-integrated-terminal',
       name: 'Claude IDE: Open Claude in Integrated Terminal',
-      callback: () => {
+      callback: async () => {
         const leaf = this.app.workspace.getLeaf('tab');
-        openTerminalInLeaf(leaf);
+        await leaf.setViewState({
+          type: TERMINAL_VIEW_TYPE,
+          active: true,
+          state: {}
+        });
       }
     });
 
@@ -36,18 +39,6 @@ export default class ClaudeIdePlugin extends Plugin {
         this.bridge?.emitResourcesListChanged();
       })
     );
-
-    this.adapter.on('selection/changed', (payload) => {
-      this.bridge?.emitSelectionChanged(payload as any);
-    });
-
-      this.adapter.on('resources/listChanged', () => {
-      this.bridge?.emitResourcesListChanged();
-    });
-
-    this.adapter.on('resources/updated', (uri: string) => {
-      this.bridge?.emitResourceUpdated(uri);
-    });
 
     this.registerEvent(
       (this.app.workspace as any).on('quit', () => {
@@ -66,11 +57,15 @@ export default class ClaudeIdePlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const loaded = await this.loadData();
-    this.settings = Object.assign({}, CLAUDE_IDE_DEFAULT_SETTINGS, loaded ?? {});
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  syncEditorSettings(): void {
+    this.adapter?.updateSettings(this.settings);
   }
 
   isBridgeRunning(): boolean {
@@ -91,34 +86,47 @@ export default class ClaudeIdePlugin extends Plugin {
 
     const token = randomBytes(32).toString('hex');
     const bridge = new WsAdapter(
-        {
-          authToken: token,
-          workspaceFolder
-        },
+      {
+        authToken: token,
+        workspaceFolder
+      },
       adapter,
       (message) => this.log(message)
     );
 
     try {
       const port = await bridge.start();
-      await this.discovery.start(port, {
+      await writeLockFile(port, {
         workspaceFolders: [workspaceFolder],
         authToken: token
       });
 
       this.bridge = bridge;
-      this.adapter?.startTracking();
+      this.adapter?.startTracking({
+        onResourcesListChanged: () => {
+          this.bridge?.emitResourcesListChanged();
+        },
+        onSelectionChanged: (payload) => {
+          this.bridge?.emitSelectionChanged(payload);
+        },
+        onResourceUpdated: (uri) => {
+          this.bridge?.emitResourceUpdated(uri);
+        }
+      });
       this.running = true;
 
       this.bridge.emitResourcesListChanged();
       this.bridge.emitSelectionChanged(adapter.getSelectionPayload());
 
       if (this.settings.autoLaunchClaudeWithIde) {
-        this.log('autoLaunchClaudeWithIde enabled, launch command not wired in this implementation yet.');
+        this.log('autoLaunchClaudeWithIde is enabled but not yet implemented.');
       }
     } catch (error) {
+      const port = bridge.port;
       await bridge.stop();
-      await this.discovery.stop(bridge.port).catch(() => undefined);
+      if (port > 0) {
+        await deleteLockFile(port).catch(() => undefined);
+      }
       throw error;
     }
   }
@@ -127,6 +135,7 @@ export default class ClaudeIdePlugin extends Plugin {
     if (!this.bridge) {
       return;
     }
+
     const bridge = this.bridge;
     const port = bridge.port;
     this.bridge = null;
@@ -134,7 +143,7 @@ export default class ClaudeIdePlugin extends Plugin {
     this.ensureAdapter().stopTracking();
 
     await bridge.stop().catch(() => undefined);
-    await this.discovery.stop(port).catch(() => undefined);
+    await deleteLockFile(port).catch(() => undefined);
   }
 
   private log(message: string): void {

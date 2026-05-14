@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import WebSocket from 'ws';
-import { randomBytes } from 'node:crypto';
 import { EditorStateAdapter } from '../../src/editor-state';
-import { CLAUDE_IDE_DEFAULT_SETTINGS } from '../../src/settings';
+import { DEFAULT_SETTINGS } from '../../src/settings';
 import { WsAdapter } from '../../src/ws-adapter';
 
 const mkApp = () => {
@@ -36,7 +35,7 @@ describe('WsAdapter integration', () => {
   let adapter: WsAdapter;
 
   beforeEach(async () => {
-    const editor = new EditorStateAdapter(mkApp() as any, { ...CLAUDE_IDE_DEFAULT_SETTINGS, maxFileBytes: 4096 });
+    const editor = new EditorStateAdapter(mkApp() as any, { ...DEFAULT_SETTINGS, maxFileBytes: 4096 });
     await editor.warmCache();
     adapter = new WsAdapter({ authToken: 'token-1', workspaceFolder: '/tmp/vault' }, editor, () => undefined);
   });

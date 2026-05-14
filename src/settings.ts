@@ -1,4 +1,5 @@
 import { App, Plugin, PluginSettingTab, Setting } from 'obsidian';
+import type ClaudeIdePlugin from './main';
 
 export interface ClaudeIdeSettings {
   claudeCommand: string;
@@ -9,7 +10,7 @@ export interface ClaudeIdeSettings {
   debugLogging: boolean;
 }
 
-export const CLAUDE_IDE_DEFAULT_SETTINGS: ClaudeIdeSettings = {
+export const DEFAULT_SETTINGS: ClaudeIdeSettings = {
   claudeCommand: 'claude',
   autoStartBridge: true,
   autoLaunchClaudeWithIde: false,
@@ -19,9 +20,9 @@ export const CLAUDE_IDE_DEFAULT_SETTINGS: ClaudeIdeSettings = {
 };
 
 export class ClaudeIdeSettingTab extends PluginSettingTab {
-  plugin: ClaudeIdePluginLike;
+  plugin: ClaudeIdePlugin;
 
-  constructor(app: App, plugin: ClaudeIdePluginLike) {
+  constructor(app: App, plugin: ClaudeIdePlugin) {
     super(app, plugin as unknown as Plugin);
     this.plugin = plugin;
   }
@@ -58,6 +59,7 @@ export class ClaudeIdeSettingTab extends PluginSettingTab {
             if (!value) {
               await this.plugin.stopBridge();
             }
+            this.plugin.syncEditorSettings();
           })
       );
 
@@ -70,6 +72,7 @@ export class ClaudeIdeSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.autoLaunchClaudeWithIde = value;
             await this.persist();
+            this.plugin.syncEditorSettings();
           })
       );
 
@@ -82,6 +85,7 @@ export class ClaudeIdeSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.shareUnsavedBuffer = value;
             await this.persist();
+            this.plugin.syncEditorSettings();
           })
       );
 
@@ -96,6 +100,7 @@ export class ClaudeIdeSettingTab extends PluginSettingTab {
             const parsed = Number.parseInt(value, 10);
             this.plugin.settings.maxFileBytes = Number.isFinite(parsed) && parsed > 0 ? parsed : 200000;
             await this.persist();
+            this.plugin.syncEditorSettings();
           })
       );
 
@@ -108,6 +113,7 @@ export class ClaudeIdeSettingTab extends PluginSettingTab {
           .onChange(async (value) => {
             this.plugin.settings.debugLogging = value;
             await this.persist();
+            this.plugin.syncEditorSettings();
           })
       );
   }
@@ -119,13 +125,4 @@ export class ClaudeIdeSettingTab extends PluginSettingTab {
     }
     await this.plugin.saveData(this.plugin.settings);
   }
-}
-
-export interface ClaudeIdePluginLike {
-  settings: ClaudeIdeSettings;
-  saveSettings?(): Promise<void>;
-  saveData(data: unknown): Promise<void>;
-  startBridge(): Promise<void>;
-  stopBridge(): Promise<void>;
-  isBridgeRunning(): boolean;
 }
