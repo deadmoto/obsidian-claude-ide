@@ -25,3 +25,5 @@ npm test
 
 - This plugin intentionally keeps the bridge read-only.
 - PTY support is implemented through `scripts/pty-bridge.py` and spawned with 4 stdio pipes.
+
+- Implementation complete in this commit.

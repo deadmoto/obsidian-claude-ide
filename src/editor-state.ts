@@ -1,42 +1,38 @@
 import { App, FileView, MarkdownView, TFile, WorkspaceLeaf } from 'obsidian';
+import { CurrentFilePayload, SelectionPayload } from './bridge/types';
 import { ClaudeIdeSettings } from './settings';
-import { EventEmitter } from 'node:events';
 import path from 'node:path';
 
-export interface SelectionPayload {
-  filePath?: string;
-  selection?: {
-    start: { line: number; character: number };
-    end: { line: number; character: number };
-  } | null;
-  text?: string;
-}
+export type EditorStateCallbacks = {
+  onResourcesListChanged?: () => void;
+  onSelectionChanged?: (payload: SelectionPayload | null) => void;
+  onResourceUpdated?: (uri: string) => void;
+};
 
-export interface CurrentFilePayload {
-  path: string;
-  relativePath: string;
-  language: string;
-  content: string;
-  isDirty: boolean;
-  timestamp: string;
-}
-
-export class EditorStateAdapter extends EventEmitter {
+export class EditorStateAdapter {
   private activeLeaf: WorkspaceLeaf | null = null;
   private cache: Map<string, { content: string; timestamp: number; dirty: boolean }> = new Map();
   private watcher: ReturnType<typeof setInterval> | null = null;
   private lastResourcePath: string | null = null;
   private lastSelectionSignature: string = 'null';
+  private callbacks: EditorStateCallbacks | null = null;
 
-  constructor(private readonly app: App, private readonly settings: ClaudeIdeSettings) {
-    super();
-  }
+  constructor(private readonly app: App, private readonly settings: ClaudeIdeSettings) {}
 
-  startTracking(): void {
+  startTracking(callbacks?: EditorStateCallbacks): void {
+    if (callbacks) {
+      this.callbacks = {
+        onResourcesListChanged: callbacks.onResourcesListChanged,
+        onSelectionChanged: callbacks.onSelectionChanged,
+        onResourceUpdated: callbacks.onResourceUpdated
+      };
+    }
+
     if (this.watcher) {
       return;
     }
     this.watcher = setInterval(() => this.pollState(), 250);
+    this.pollState();
   }
 
   stopTracking(): void {
@@ -213,15 +209,15 @@ export class EditorStateAdapter extends EventEmitter {
 
     if (currentPath !== this.lastResourcePath) {
       this.lastResourcePath = currentPath;
-      this.emit('resources/listChanged', currentPath);
-      this.emit('selection/changed', null);
+      this.callbacks?.onResourcesListChanged?.();
+      this.callbacks?.onSelectionChanged?.(null);
     }
 
     const selection = this.getSelectionPayload();
     const signature = selection ? JSON.stringify(selection) : 'null';
     if (signature !== this.lastSelectionSignature) {
       this.lastSelectionSignature = signature;
-      this.emit('selection/changed', selection);
+      this.callbacks?.onSelectionChanged?.(selection);
     }
 
     if (current && current.file.path) {
@@ -230,7 +226,7 @@ export class EditorStateAdapter extends EventEmitter {
       const isDirty = current.isDirty;
       if (!cache || cache.content !== content || cache.dirty !== isDirty) {
         this.cache.set(current.file.path, { content, timestamp: Date.now(), dirty: isDirty });
-        this.emit('resources/updated', this.resolveFileUri(current.file.path));
+        this.callbacks?.onResourceUpdated?.(this.resolveFileUri(current.file.path));
       }
     }
   }

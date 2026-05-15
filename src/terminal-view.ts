@@ -1,4 +1,4 @@
-import { ItemView, WorkspaceLeaf } from 'obsidian';
+import { ItemView } from 'obsidian';
 import { Terminal } from 'xterm';
 import path from 'node:path';
 import { spawnPtyProcess } from './terminal';
@@ -66,12 +66,4 @@ export class TerminalView extends ItemView {
     }
     return path.join(pluginDir, '.obsidian', 'plugins', 'claude-ide', 'scripts', 'pty-bridge.py');
   }
-}
-
-export async function openTerminalInLeaf(leaf: WorkspaceLeaf): Promise<void> {
-  await leaf.setViewState({
-    type: TERMINAL_VIEW_TYPE,
-    active: true,
-    state: {}
-  });
 }

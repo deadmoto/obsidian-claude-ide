@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { EditorStateAdapter } from '../../src/editor-state';
-import { CLAUDE_IDE_DEFAULT_SETTINGS } from '../../src/settings';
+import { DEFAULT_SETTINGS } from '../../src/settings';
 
 const mkApp = () => {
   const markdownView = {
@@ -35,7 +35,7 @@ const mkApp = () => {
 describe('EditorStateAdapter', () => {
   it('returns current file payload and truncates large files', async () => {
     const { app } = mkApp();
-    const adapter = new EditorStateAdapter(app as any, { ...CLAUDE_IDE_DEFAULT_SETTINGS, maxFileBytes: 8 });
+    const adapter = new EditorStateAdapter(app as any, { ...DEFAULT_SETTINGS, maxFileBytes: 8 });
 
     await adapter.warmCache();
     const second = adapter.getCurrentFile();
@@ -47,7 +47,7 @@ describe('EditorStateAdapter', () => {
 
   it('builds selection payload from current view', () => {
     const { app } = mkApp();
-    const adapter = new EditorStateAdapter(app as any, CLAUDE_IDE_DEFAULT_SETTINGS);
+    const adapter = new EditorStateAdapter(app as any, DEFAULT_SETTINGS);
     const selection = adapter.getSelectionPayload();
     expect(selection).not.toBeNull();
     expect(selection?.selection?.start).toMatchObject({ line: 2, character: 1 });
