@@ -4,13 +4,13 @@ import path from 'node:path';
 export default defineConfig({
   resolve: {
     alias: {
-      obsidian: path.resolve(__dirname, 'tests/mocks/obsidian.ts')
+      obsidian: path.resolve(__dirname, 'src/__mocks__/obsidian.ts')
     }
   },
   test: {
     environment: 'node',
     globals: true,
-    include: ['tests/unit/**/*.ts', 'src/**/*.test.ts'],
+    include: ['src/**/*.test.ts'],
     coverage: {
       reporter: ['text'],
       include: ['src/**/*.ts']

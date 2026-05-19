@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
-import { PTY_BRIDGE_SCRIPT } from './terminal/pty-bridge-script';
+import { PTY_BRIDGE_SCRIPT } from './pty-bridge-script';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 

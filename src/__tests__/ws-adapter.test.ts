@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import WebSocket from 'ws';
-import { EditorStateAdapter } from '../../src/editor-state';
-import { DEFAULT_SETTINGS } from '../../src/settings';
-import { WsAdapter } from '../../src/ws-adapter';
+import { EditorStateAdapter } from '../editor/state';
+import { DEFAULT_SETTINGS } from '../settings';
+import { WsAdapter } from '../bridge/ws-adapter';
 
 const mkApp = () => {
   const file = { path: 'notes/test.md', extension: 'md' };

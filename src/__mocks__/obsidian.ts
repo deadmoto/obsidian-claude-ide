@@ -68,5 +68,3 @@ export class TFile {
 
 export interface App {}
 export type WorkspaceLeaf = any;
-
-export { WorkspaceLeaf };

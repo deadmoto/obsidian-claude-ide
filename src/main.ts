@@ -1,10 +1,10 @@
 import * as crypto from 'node:crypto';
 import { Plugin, WorkspaceLeaf } from 'obsidian';
-import { deleteLockFile, writeLockFile } from './discovery';
-import { EditorStateAdapter } from './editor-state';
-import { WsAdapter } from './ws-adapter';
+import { deleteLockFile, writeLockFile } from './bridge/discovery';
+import { EditorStateAdapter } from './editor/state';
+import { WsAdapter } from './bridge/ws-adapter';
 import { ClaudeIdeSettingTab, ClaudeIdeSettings, DEFAULT_SETTINGS } from './settings';
-import { TERMINAL_VIEW_TYPE, TerminalView } from './terminal-view';
+import { TERMINAL_VIEW_TYPE, TerminalView } from './terminal/terminal-view';
 
 export default class ClaudeIdePlugin extends Plugin {
   settings: ClaudeIdeSettings = DEFAULT_SETTINGS;

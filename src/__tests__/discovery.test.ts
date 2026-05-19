@@ -9,7 +9,7 @@ import {
   listLockPaths,
   readLockFile,
   writeLockFile
-} from '../../src/discovery';
+} from '../bridge/discovery';
 
 describe('discovery lock-file helpers', () => {
   let home: string;

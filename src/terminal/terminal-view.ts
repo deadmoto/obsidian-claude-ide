@@ -1,7 +1,8 @@
 import { ItemView } from 'obsidian';
 import { Terminal } from 'xterm';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { spawnPtyProcess } from './terminal';
+import { spawnPtyProcess } from './pty';
 
 export const TERMINAL_VIEW_TYPE = 'claude-ide-terminal';
 
@@ -62,8 +63,15 @@ export class TerminalView extends ItemView {
   private getBridgePath(): string {
     const pluginDir = (this.app.vault.adapter as any)?.basePath;
     if (!pluginDir) {
-      return path.join(__dirname, '..', 'scripts', 'pty-bridge.py');
+      const devPath = path.join(__dirname, '..', 'terminal', 'pty-bridge.py');
+      const legacyDevPath = path.join(__dirname, '..', 'scripts', 'pty-bridge.py');
+      return existsSync(devPath) ? devPath : legacyDevPath;
     }
-    return path.join(pluginDir, '.obsidian', 'plugins', 'claude-ide', 'scripts', 'pty-bridge.py');
+
+    const pluginRootPath = path.join(pluginDir, '.obsidian', 'plugins', 'claude-ide');
+    const packagedPath = path.join(pluginRootPath, 'terminal', 'pty-bridge.py');
+    const legacyPackagedPath = path.join(pluginRootPath, 'scripts', 'pty-bridge.py');
+
+    return existsSync(packagedPath) ? packagedPath : legacyPackagedPath;
   }
 }

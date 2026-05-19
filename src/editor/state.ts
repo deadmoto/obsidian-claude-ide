@@ -1,6 +1,6 @@
 import { App, FileView, MarkdownView, TFile, WorkspaceLeaf } from 'obsidian';
-import { CurrentFilePayload, SelectionPayload } from './bridge/types';
-import { ClaudeIdeSettings } from './settings';
+import { CurrentFilePayload, SelectionPayload } from '../bridge/types';
+import { ClaudeIdeSettings } from '../settings';
 import path from 'node:path';
 
 export type EditorStateCallbacks = {

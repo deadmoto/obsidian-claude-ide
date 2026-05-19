@@ -17,6 +17,6 @@
       "obsidian": ["./node_modules/obsidian"]
     }
   },
-  "include": ["src", "esbuild.config.mjs", "tests/unit", "scripts"],
+  "include": ["src", "esbuild.config.mjs"],
   "exclude": ["dist", "node_modules"]
 }

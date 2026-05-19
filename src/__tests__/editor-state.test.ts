@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { EditorStateAdapter } from '../../src/editor-state';
-import { DEFAULT_SETTINGS } from '../../src/settings';
+import { EditorStateAdapter } from '../editor/state';
+import { DEFAULT_SETTINGS } from '../settings';
 
 const mkApp = () => {
   const markdownView = {

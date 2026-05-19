@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { TERMINAL_VIEW_TYPE } from '../../src/terminal-view';
+import { TERMINAL_VIEW_TYPE } from '../terminal/terminal-view';
 
 vi.mock('xterm', () => ({
   Terminal: vi.fn().mockImplementation(() => ({
@@ -11,7 +11,7 @@ vi.mock('xterm', () => ({
   }))
 }));
 
-vi.mock('../../src/terminal', () => ({
+vi.mock('../terminal/pty', () => ({
   spawnPtyProcess: vi.fn(() => ({
     stdin: { write: vi.fn() },
     stdout: { on: vi.fn() },

@@ -1,6 +1,6 @@
 import { createServer } from 'node:net';
 import { describe, expect, it } from 'vitest';
-import { findFreePort, tryPort } from '../../src/bridge/net';
+import { findFreePort, tryPort } from '../bridge/net';
 
 describe('bridge port helpers', () => {
   it('returns false when port is in use', async () => {
