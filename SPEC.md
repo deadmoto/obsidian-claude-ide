@@ -46,6 +46,13 @@
 2. Unauthorized websocket headers/protocol combinations are rejected.
 3. Bridge can run without a selected file and still handle protocol interactions.
 
+### 2.5 Integrated Terminal
+1. The integrated terminal view spawns the user's `$SHELL` as a login + interactive shell (`-l -i`) inside the vault directory.
+2. If `claudeCommand` is set (default `claude`), the terminal runs that command first and re-execs the shell when it exits, so the user keeps a working shell instead of an empty leaf.
+3. The Claude CLI owns the screen. Claude Code, like `vim` or `less`, may enter the alternate screen buffer (`\e[?1049h`) and render its own scrollable transcript. The plugin therefore does not tune xterm `scrollback`, `scrollOnUserInput`, or related smooth-scroll history options — scrolling through Claude history is the Claude CLI's responsibility. Xterm scrollback only applies to the brief shell session before Claude starts and the fallback shell after Claude exits, and is left at xterm defaults.
+4. The terminal view does not emit user-facing chrome (status banners like "Starting…") before the child process produces output. The xterm viewport is the child's surface; only the child writes to it.
+5. xterm input/output, resize (via fd 3 `<rows>x<cols>\n` frames), and lifecycle are owned by `TerminalView` and `pty-bridge.py` (see `TERMINAL.md`).
+
 ## 3. Structural Constraints (post-PR #2)
 
 - Source layout must reflect logical boundary:
@@ -60,6 +67,7 @@
 - Mobile support.
 - Broad MCP write capabilities beyond current tool/resource surface.
 - Full auto-launch orchestration for `claude` command (`autoLaunchClaudeWithIde` is currently not implemented).
+- Custom in-terminal scrollback / search / pager UI — delegated to the Claude CLI's own TUI.
 
 ## 5. Acceptance Criteria
 
