@@ -1,5 +1,5 @@
 import { ItemView, Platform } from 'obsidian';
-import { Terminal } from 'xterm';
+import { Terminal, type ITheme } from 'xterm';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawnPtyProcess } from './pty';
@@ -26,7 +26,14 @@ export class TerminalView extends ItemView {
     this.terminal = new Terminal({
       cursorBlink: true,
       convertEol: true,
-      fontFamily: 'monospace'
+      fontFamily: this.getMonospaceFont(),
+      fontSize: 13,
+      fontWeight: '400',
+      fontWeightBold: '700',
+      lineHeight: 1.2,
+      letterSpacing: 0,
+      minimumContrastRatio: 4.5,
+      theme: this.buildTheme()
     });
     this.terminal.open(container);
 
@@ -64,6 +71,55 @@ export class TerminalView extends ItemView {
       const message = JSON.stringify({ type: 'resize', cols, rows }) + '\n';
       process.stdin.write(message);
     });
+
+    this.registerEvent(
+      this.app.workspace.on('css-change', () => {
+        this.updateTerminalTheme();
+      })
+    );
+
+    this.updateTerminalTheme();
+  }
+
+  private buildTheme(): ITheme {
+    const v = (name: string): string => getComputedStyle(document.body).getPropertyValue(name).trim();
+
+    return {
+      background: v('--background-primary'),
+      foreground: v('--text-normal'),
+      cursor: v('--text-accent'),
+      cursorAccent: v('--background-primary'),
+      selectionBackground: v('--text-selection'),
+      black: v('--color-base-100'),
+      red: v('--color-red'),
+      green: v('--color-green'),
+      yellow: v('--color-yellow'),
+      blue: v('--color-blue'),
+      magenta: v('--color-purple'),
+      cyan: v('--color-cyan'),
+      white: v('--text-normal'),
+      brightBlack: v('--color-base-30'),
+      brightRed: v('--color-red'),
+      brightGreen: v('--color-green'),
+      brightYellow: v('--color-yellow'),
+      brightBlue: v('--color-blue'),
+      brightMagenta: v('--color-purple'),
+      brightCyan: v('--color-cyan'),
+      brightWhite: v('--text-normal')
+    };
+  }
+
+  private getMonospaceFont(): string {
+    return getComputedStyle(document.body).getPropertyValue('--font-monospace').trim();
+  }
+
+  private updateTerminalTheme(): void {
+    if (!this.terminal) {
+      return;
+    }
+
+    this.terminal.options.theme = this.buildTheme();
+    this.terminal.options.fontFamily = this.getMonospaceFont();
   }
 
   private async handleTerminalContextMenu(event: MouseEvent): Promise<void> {
