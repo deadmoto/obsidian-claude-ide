@@ -1,5 +1,6 @@
 import { ItemView, Platform } from 'obsidian';
 import { Terminal, type ITheme } from 'xterm';
+import { FitAddon } from 'xterm-addon-fit';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawnPtyProcess } from './pty';
@@ -10,6 +11,8 @@ export class TerminalView extends ItemView {
   private terminal: Terminal | null = null;
   private process: ReturnType<typeof spawnPtyProcess> | null = null;
   private titleFromChild = '';
+  private fitAddon: FitAddon | null = null;
+  private resizeObserver: ResizeObserver | null = null;
 
   getViewType(): string {
     return TERMINAL_VIEW_TYPE;
@@ -17,6 +20,10 @@ export class TerminalView extends ItemView {
 
   getDisplayText(): string {
     return this.titleFromChild || 'Claude IDE';
+  }
+
+  onResize(): void {
+    this.refit();
   }
 
   async onOpen(): Promise<void> {
@@ -39,6 +46,9 @@ export class TerminalView extends ItemView {
       theme: this.buildTheme()
     });
     this.terminal.open(container);
+    this.fitAddon = new FitAddon();
+    this.terminal.loadAddon(this.fitAddon);
+    this.fitAddon.fit();
 
     const process = spawnPtyProcess(this.getBridgePath());
     if (!process) {
@@ -80,6 +90,21 @@ export class TerminalView extends ItemView {
         this.updateTerminalTheme();
       })
     );
+    this.registerEvent(
+      this.app.workspace.on('layout-change', () => {
+        this.refit();
+      })
+    );
+    this.registerEvent(
+      (this.app.workspace as any).on('active-leaf-change', (leaf: any) => {
+        if (leaf === this.leaf) {
+          this.refit();
+        }
+      })
+    );
+
+    this.resizeObserver = new ResizeObserver(() => this.refit());
+    this.resizeObserver.observe(container);
 
     this.updateTerminalTheme();
   }
@@ -123,6 +148,12 @@ export class TerminalView extends ItemView {
 
     this.terminal.options.theme = this.buildTheme();
     this.terminal.options.fontFamily = this.getMonospaceFont();
+  }
+
+  private refit(): void {
+    requestAnimationFrame(() => {
+      this.fitAddon?.fit();
+    });
   }
 
   private async handleTerminalContextMenu(event: MouseEvent): Promise<void> {
@@ -187,6 +218,10 @@ export class TerminalView extends ItemView {
       this.process.kill();
       this.process = null;
     }
+    this.fitAddon?.dispose();
+    this.fitAddon = null;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     this.terminal?.dispose();
     this.terminal = null;
   }
