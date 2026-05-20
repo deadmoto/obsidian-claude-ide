@@ -1,5 +1,5 @@
 import * as crypto from 'node:crypto';
-import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidian';
 import { cleanStaleLocks, deleteLockFile, writeLockFile } from './bridge/discovery';
 import { EditorStateAdapter } from './editor/state';
 import { WsAdapter } from './bridge/ws-adapter';
@@ -32,7 +32,13 @@ export default class ClaudeIdePlugin extends Plugin {
     });
 
     this.registerEvent(
-      (this.app.workspace as any).on('active-leaf-change', (leaf: WorkspaceLeaf) => {
+      (this.app.workspace as any).on('active-leaf-change', (leaf: WorkspaceLeaf | null) => {
+        // Only react when focus lands on a real markdown view. Otherwise
+        // (terminal pane, sidebars, settings tab) the previously-tracked file
+        // and selection must survive the focus change so Claude keeps showing
+        // "⧉ In file.md" while the user types in the terminal.
+        const view = leaf?.view;
+        if (!(view instanceof MarkdownView) || !view.file) return;
         this.adapter?.setActiveLeaf(leaf);
         this.bridge?.emitResourcesListChanged();
       })

@@ -1,4 +1,4 @@
-import { App, FileView, MarkdownView, TFile, WorkspaceLeaf } from 'obsidian';
+import { App, FileSystemAdapter, FileView, MarkdownView, TFile, WorkspaceLeaf } from 'obsidian';
 import { CurrentFilePayload, SelectionPayload } from '../bridge/types';
 import { ClaudeIdeSettings } from '../settings';
 import path from 'node:path';
@@ -87,8 +87,14 @@ export class EditorStateAdapter {
   }
 
   getWorkspaceFolderPath(): string | null {
-    const root = this.app.vault.getRoot();
-    return (root as { path?: string }).path || (root as { getPath?: () => string }).getPath?.() || null;
+    // Absolute filesystem path of the vault. vault.getRoot().path returns "/"
+    // (the vault-relative root), which breaks both the terminal cwd and
+    // Claude's getWorkspaceFolders — so claude --ide treats `/` as the repo.
+    const adapter = this.app.vault.adapter;
+    if (adapter instanceof FileSystemAdapter) {
+      return adapter.getBasePath();
+    }
+    return null;
   }
 
   getSelectionPayload(): SelectionPayload | null {
@@ -100,31 +106,40 @@ export class EditorStateAdapter {
     const editor = (current as any).editor;
     const filePath = this.resolveAbsolutePath(current.file.path);
 
+    // Claude Code's mU7 hook ignores selection_changed unless a real
+    // {start,end} range is present. Always emit at least a 1-character range
+    // — this is what populates ideSelection.filePath and drives the
+    // "⧉ In file.md" display even when no text is selected.
     if (!editor || typeof editor.getSelection !== 'function') {
       return {
         filePath,
-        selection: null,
+        selection: {
+          start: { line: 0, character: 0 },
+          end:   { line: 0, character: 1 }
+        },
         text: ''
       };
     }
 
     const text = editor.getSelection?.() || '';
+    const from = this.normalizeCursor(editor, 'from');
+
     if (!text) {
+      // Cursor only — send a 1-char range at the cursor so the hook accepts it.
       return {
         filePath,
-        selection: null,
+        selection: {
+          start: from,
+          end:   { line: from.line, character: from.character + 1 }
+        },
         text: ''
       };
     }
 
-    const from = this.normalizeCursor(editor, 'from');
     const to = this.normalizeCursor(editor, 'to');
     return {
       filePath,
-      selection: {
-        start: from,
-        end: to
-      },
+      selection: { start: from, end: to },
       text
     };
   }
@@ -210,7 +225,9 @@ export class EditorStateAdapter {
     if (currentPath !== this.lastResourcePath) {
       this.lastResourcePath = currentPath;
       this.callbacks?.onResourcesListChanged?.();
-      this.callbacks?.onSelectionChanged?.(null);
+      // Do NOT emit selection_changed(null) here — it would wipe Claude's
+      // ideSelection. The signature check below will emit the new selection
+      // payload (or null when the file is genuinely closed) on its own.
     }
 
     const selection = this.getSelectionPayload();
