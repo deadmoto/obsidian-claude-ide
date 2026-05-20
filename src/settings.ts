@@ -5,6 +5,7 @@ export interface ClaudeIdeSettings {
   claudeCommand: string;
   autoStartBridge: boolean;
   autoLaunchClaudeWithIde: boolean;
+  autoOpenTerminal: 'disabled' | 'right-split' | 'bottom-split' | 'new-tab';
   shareUnsavedBuffer: boolean;
   maxFileBytes: number;
   debugLogging: boolean;
@@ -14,6 +15,7 @@ export const DEFAULT_SETTINGS: ClaudeIdeSettings = {
   claudeCommand: 'claude',
   autoStartBridge: true,
   autoLaunchClaudeWithIde: false,
+  autoOpenTerminal: 'disabled',
   shareUnsavedBuffer: true,
   maxFileBytes: 200000,
   debugLogging: false
@@ -71,6 +73,23 @@ export class ClaudeIdeSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.autoLaunchClaudeWithIde)
           .onChange(async (value) => {
             this.plugin.settings.autoLaunchClaudeWithIde = value;
+            await this.persist();
+            this.plugin.syncEditorSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName('Auto-open Claude terminal')
+      .setDesc('Open the terminal automatically on plugin load.')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('disabled', 'Disabled')
+          .addOption('right-split', 'Right split')
+          .addOption('bottom-split', 'Bottom split')
+          .addOption('new-tab', 'New tab')
+          .setValue(this.plugin.settings.autoOpenTerminal)
+          .onChange(async (value) => {
+            this.plugin.settings.autoOpenTerminal = value as ClaudeIdeSettings['autoOpenTerminal'];
             await this.persist();
             this.plugin.syncEditorSettings();
           })

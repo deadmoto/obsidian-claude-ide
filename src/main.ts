@@ -24,12 +24,7 @@ export default class ClaudeIdePlugin extends Plugin {
       id: 'open-claude-in-integrated-terminal',
       name: 'Claude IDE: Open Claude in Integrated Terminal',
       callback: async () => {
-        const leaf = this.app.workspace.getLeaf('tab');
-        await leaf.setViewState({
-          type: TERMINAL_VIEW_TYPE,
-          active: true,
-          state: {}
-        });
+        await this.openTerminal('new-tab');
       }
     });
 
@@ -49,6 +44,41 @@ export default class ClaudeIdePlugin extends Plugin {
     if (this.settings.autoStartBridge) {
       await this.startBridge();
     }
+
+    if (this.settings.autoOpenTerminal !== 'disabled') {
+      await this.openTerminal(this.settings.autoOpenTerminal);
+    }
+  }
+
+  private async openTerminal(location: 'right-split' | 'bottom-split' | 'new-tab'): Promise<WorkspaceLeaf> {
+    const existing = this.app.workspace.getLeavesOfType(TERMINAL_VIEW_TYPE);
+    if (existing.length) {
+      const leaf = existing[0];
+      this.app.workspace.revealLeaf(leaf);
+      return leaf;
+    }
+
+    let leaf: WorkspaceLeaf | null;
+    if (location === 'right-split') {
+      leaf = this.app.workspace.getRightLeaf(false) ?? this.app.workspace.getLeaf('tab');
+    } else if (location === 'bottom-split') {
+      leaf = this.app.workspace.getLeaf('split', 'horizontal') ?? this.app.workspace.getLeaf('tab');
+    } else {
+      leaf = this.app.workspace.getLeaf('tab');
+    }
+
+    if (!leaf) {
+      throw new Error('Unable to allocate a leaf for terminal');
+    }
+
+      await leaf.setViewState({
+        type: TERMINAL_VIEW_TYPE,
+        active: true,
+        state: {}
+      });
+
+    this.app.workspace.revealLeaf(leaf);
+    return leaf;
   }
 
   onunload(): void {
