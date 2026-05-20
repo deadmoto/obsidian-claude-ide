@@ -116,7 +116,9 @@ export async function findLockForWorkspace(workspaceFolder: string): Promise<Loc
   return null;
 }
 
-export async function cleanStaleLocks(): Promise<void> {
+export async function cleanStaleLocks(): Promise<number[]> {
+  const removedPorts: number[] = [];
+
   const locks = await listLockPaths();
   await ensureDirectoryMode700(getLockDir());
 
@@ -130,9 +132,15 @@ export async function cleanStaleLocks(): Promise<void> {
       const alive = await isPidAlive(payload.pid);
       if (!alive) {
         await fs.unlink(lockPath).catch(() => undefined);
+        const port = Number.parseInt(path.basename(lockPath, '.lock'), 10);
+        if (Number.isFinite(port) && port > 0) {
+          removedPorts.push(port);
+        }
       }
     })
   );
+
+  return removedPorts;
 }
 
 async function isPidAlive(pid: number): Promise<boolean> {

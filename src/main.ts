@@ -1,6 +1,6 @@
 import * as crypto from 'node:crypto';
-import { Plugin, WorkspaceLeaf } from 'obsidian';
-import { deleteLockFile, writeLockFile } from './bridge/discovery';
+import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { cleanStaleLocks, deleteLockFile, writeLockFile } from './bridge/discovery';
 import { EditorStateAdapter } from './editor/state';
 import { WsAdapter } from './bridge/ws-adapter';
 import { ClaudeIdeSettingTab, ClaudeIdeSettings, DEFAULT_SETTINGS } from './settings';
@@ -125,6 +125,11 @@ export default class ClaudeIdePlugin extends Plugin {
     );
 
     try {
+      const removedLocks = await cleanStaleLocks();
+      for (const port of removedLocks) {
+        this.notify(`cleared stale lock for :${port}`);
+      }
+
       const port = await bridge.start();
       await writeLockFile(port, {
         workspaceFolders: [workspaceFolder],
@@ -148,11 +153,14 @@ export default class ClaudeIdePlugin extends Plugin {
       this.bridge.emitResourcesListChanged();
       this.bridge.emitSelectionChanged(adapter.getSelectionPayload());
 
+      this.notify(`bridge started on :${port}`);
+
       if (this.settings.autoLaunchClaudeWithIde) {
         this.log('autoLaunchClaudeWithIde is enabled but not yet implemented.');
       }
     } catch (error) {
       const port = bridge.port;
+      this.notify(`bridge failed to start — ${(error as Error).message ?? String(error)}`, 'error');
       await bridge.stop();
       if (port > 0) {
         await deleteLockFile(port).catch(() => undefined);
@@ -174,11 +182,22 @@ export default class ClaudeIdePlugin extends Plugin {
 
     await bridge.stop().catch(() => undefined);
     await deleteLockFile(port).catch(() => undefined);
+    this.notify('bridge stopped');
   }
 
   private log(message: string): void {
+    console.log(`[Claude IDE] ${message}`);
+  }
+
+  private notify(message: string, level: 'info' | 'error' = 'info'): void {
+    this.log(message);
+    if (level === 'error') {
+      new Notice(`Claude IDE: ${message}`, 0);
+      return;
+    }
+
     if (this.settings.debugLogging) {
-      console.log(`[Claude IDE] ${message}`);
+      new Notice(`Claude IDE: ${message}`, 3000);
     }
   }
 
