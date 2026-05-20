@@ -11,6 +11,7 @@ export interface PtyProcess {
   stderr: fs.ReadStream;
   extra: fs.ReadStream;
   kill: () => void;
+  onExit: (callback: (code: number | null) => void) => void;
 }
 
 /**
@@ -42,6 +43,9 @@ export function spawnPtyProcess(scriptPath: string): PtyProcess | null {
     stdout: child.stdout as fs.ReadStream,
     stderr: child.stderr as fs.ReadStream,
     extra: child.stdio[3] as unknown as fs.ReadStream,
-    kill: () => child.kill()
+    kill: () => child.kill(),
+    onExit: (callback: (code: number | null) => void) => {
+      child.on('exit', (code) => callback(code === null ? null : code));
+    }
   };
 }

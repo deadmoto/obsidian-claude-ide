@@ -40,6 +40,9 @@ export class TerminalView extends ItemView {
     process.stdout.on('data', (chunk: string | Buffer) => {
       this.terminal?.write(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
     });
+    process.onExit(() => {
+      this.leaf.detach();
+    });
 
     this.terminal.attachCustomKeyEventHandler((event) => this.handleTerminalKeyEvent(event as KeyboardEvent));
     this.terminal.onTitleChange((title) => {
