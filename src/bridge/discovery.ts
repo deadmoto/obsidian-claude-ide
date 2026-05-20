@@ -69,8 +69,10 @@ export async function listLockPaths(): Promise<string[]> {
 }
 
 export async function writeLockFile(port: number, data: { workspaceFolders: string[]; authToken: string; pid?: number }): Promise<string> {
-  await cleanStaleLocks();
-
+  // Stale-lock cleanup is the caller's responsibility (see ClaudeIdePlugin.startBridge).
+  // Running it here would race with our own write — a same-PID lock from a prior
+  // in-process load is treated as stale, and we don't want to wipe the lock we
+  // just wrote inside this same call.
   await ensureIdeDir();
   const payload: LockFileData = {
     workspaceFolders: data.workspaceFolders,
@@ -129,8 +131,15 @@ export async function cleanStaleLocks(): Promise<number[]> {
         return;
       }
 
+      // A lock is stale if its writer is gone. Two paths:
+      //  - PID no longer alive (the classic case: Obsidian crashed/quit).
+      //  - PID is alive AND equals ours, meaning the lock was written by a
+      //    prior in-process plugin instance (dev hot-reload, disable/enable).
+      //    The previous instance is by definition gone before onload runs.
+      const writtenByPreviousSelf = payload.pid === process.pid;
       const alive = await isPidAlive(payload.pid);
-      if (!alive) {
+
+      if (writtenByPreviousSelf || !alive) {
         await fs.unlink(lockPath).catch(() => undefined);
         const port = Number.parseInt(path.basename(lockPath, '.lock'), 10);
         if (Number.isFinite(port) && port > 0) {
