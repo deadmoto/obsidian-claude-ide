@@ -1,4 +1,4 @@
-import { ItemView } from 'obsidian';
+import { ItemView, Platform } from 'obsidian';
 import { Terminal } from 'xterm';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -28,7 +28,6 @@ export class TerminalView extends ItemView {
       fontFamily: 'monospace'
     });
     this.terminal.open(container);
-    this.terminal.write('Starting PTY bridge...\r\n');
 
     const process = spawnPtyProcess(this.getBridgePath());
     if (!process) {
@@ -41,6 +40,11 @@ export class TerminalView extends ItemView {
       this.terminal?.write(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
     });
 
+    this.terminal.attachCustomKeyEventHandler((event) => this.handleTerminalKeyEvent(event as KeyboardEvent));
+    this.registerDomEvent(container, 'contextmenu', (event) => {
+      void this.handleTerminalContextMenu(event);
+    });
+
     this.terminal.onData((data) => {
       process.stdin.write(data);
     });
@@ -49,6 +53,63 @@ export class TerminalView extends ItemView {
       const message = JSON.stringify({ type: 'resize', cols, rows }) + '\n';
       process.stdin.write(message);
     });
+  }
+
+  private async handleTerminalContextMenu(event: MouseEvent): Promise<void> {
+    event.preventDefault();
+
+    const selection = this.terminal?.getSelection() ?? '';
+    if (selection) {
+      await this.copyToClipboard(selection);
+      this.terminal?.clearSelection();
+      return;
+    }
+
+    await this.pasteFromClipboard();
+  }
+
+  private handleTerminalKeyEvent(event: KeyboardEvent): boolean {
+    if (event.type !== 'keydown') {
+      return true;
+    }
+
+    const copyModifier = Platform.isMacOS ? event.metaKey : (event.ctrlKey && event.shiftKey);
+    const pasteModifier = Platform.isMacOS ? event.metaKey : (event.ctrlKey && event.shiftKey);
+
+    if (copyModifier && event.code === 'KeyC') {
+      const selection = this.terminal?.getSelection() ?? '';
+      if (!selection) {
+        return true;
+      }
+      void this.copyToClipboard(selection);
+      return false;
+    }
+
+    if (pasteModifier && event.code === 'KeyV') {
+      void this.pasteFromClipboard();
+      return false;
+    }
+
+    return true;
+  }
+
+  private async copyToClipboard(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      return;
+    }
+  }
+
+  private async pasteFromClipboard(): Promise<void> {
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        this.terminal?.paste(text);
+      }
+    } catch {
+      return;
+    }
   }
 
   async onClose(): Promise<void> {
