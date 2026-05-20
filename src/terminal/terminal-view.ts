@@ -1,18 +1,29 @@
-import { ItemView, Platform } from 'obsidian';
+import { ItemView, Platform, WorkspaceLeaf } from 'obsidian';
 import { Terminal, type ITheme } from 'xterm';
 import { FitAddon } from 'xterm-addon-fit';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
-import { spawnPtyProcess } from './pty';
+import { spawnPtyProcess, PtyProcess } from './pty';
 
 export const TERMINAL_VIEW_TYPE = 'claude-ide-terminal';
 
+export interface TerminalViewOptions {
+  getCommand?: () => string;
+  getCwd?: () => string | null;
+}
+
 export class TerminalView extends ItemView {
   private terminal: Terminal | null = null;
-  private process: ReturnType<typeof spawnPtyProcess> | null = null;
+  private process: PtyProcess | null = null;
   private titleFromChild = '';
   private fitAddon: FitAddon | null = null;
   private resizeObserver: ResizeObserver | null = null;
+  private opts: TerminalViewOptions;
+
+  constructor(leaf: WorkspaceLeaf, opts: TerminalViewOptions = {}) {
+    super(leaf);
+    this.opts = opts;
+  }
 
   getViewType(): string {
     return TERMINAL_VIEW_TYPE;
@@ -50,17 +61,24 @@ export class TerminalView extends ItemView {
     this.terminal.loadAddon(this.fitAddon);
     this.fitAddon.fit();
 
-    const process = spawnPtyProcess(this.getBridgePath());
-    if (!process) {
+    const { cols, rows } = this.terminal;
+    const command = (this.opts.getCommand?.() ?? '').trim() || undefined;
+    const cwd = this.opts.getCwd?.() ?? undefined;
+    const proc = spawnPtyProcess(this.getBridgePath(), { cols, rows, command, cwd });
+    if (!proc) {
       this.terminal.write('Missing python bridge script.\r\n');
       return;
     }
-    this.process = process;
+    this.process = proc;
 
-    process.stdout.on('data', (chunk: string | Buffer) => {
+    proc.stdout.on('data', (chunk: string | Buffer) => {
+      this.terminal?.write(Buffer.isBuffer(chunk) ? chunk : String(chunk));
+    });
+    // Surface bridge errors in the terminal — otherwise child crashes are invisible.
+    proc.stderr.on('data', (chunk: string | Buffer) => {
       this.terminal?.write(Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk));
     });
-    process.onExit(() => {
+    proc.onExit(() => {
       this.leaf.detach();
     });
 
@@ -77,12 +95,11 @@ export class TerminalView extends ItemView {
     });
 
     this.terminal.onData((data) => {
-      process.stdin.write(data);
+      proc.stdin.write(data);
     });
 
     this.terminal.onResize(({ cols, rows }) => {
-      const message = JSON.stringify({ type: 'resize', cols, rows }) + '\n';
-      process.stdin.write(message);
+      proc.writeResize(rows, cols);
     });
 
     this.registerEvent(
@@ -227,17 +244,24 @@ export class TerminalView extends ItemView {
   }
 
   private getBridgePath(): string {
-    const pluginDir = (this.app.vault.adapter as any)?.basePath;
-    if (!pluginDir) {
+    const vaultDir = (this.app.vault.adapter as any)?.basePath;
+    const pluginId = 'obsidian-claude-ide';
+
+    if (!vaultDir) {
       const devPath = path.join(__dirname, '..', 'terminal', 'pty-bridge.py');
-      const legacyDevPath = path.join(__dirname, '..', 'scripts', 'pty-bridge.py');
-      return existsSync(devPath) ? devPath : legacyDevPath;
+      return devPath;
     }
 
-    const pluginRootPath = path.join(pluginDir, '.obsidian', 'plugins', 'claude-ide');
-    const packagedPath = path.join(pluginRootPath, 'terminal', 'pty-bridge.py');
-    const legacyPackagedPath = path.join(pluginRootPath, 'scripts', 'pty-bridge.py');
-
-    return existsSync(packagedPath) ? packagedPath : legacyPackagedPath;
+    const pluginRoot = path.join(vaultDir, '.obsidian', 'plugins', pluginId);
+    const candidates = [
+      path.join(pluginRoot, 'pty-bridge.py'),
+      path.join(pluginRoot, 'terminal', 'pty-bridge.py'),
+      path.join(pluginRoot, 'scripts', 'pty-bridge.py')
+    ];
+    for (const c of candidates) {
+      if (existsSync(c)) return c;
+    }
+    // Falls through to spawnPtyProcess's inlined-script fallback.
+    return candidates[0];
   }
 }

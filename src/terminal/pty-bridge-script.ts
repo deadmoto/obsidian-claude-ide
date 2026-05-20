@@ -1,148 +1,176 @@
 export const PTY_BRIDGE_SCRIPT = `#!/usr/bin/env python3
-"""Simple PTY bridge helper for the Obsidian terminal view.
+"""PTY bridge for the Obsidian Claude IDE terminal view.
 
-Keeps stdin/stdout/stderr/stdextra active and proxies data through a local shell
-process. Kept intentionally minimal for plugin compatibility.
+Forks a child shell on a real pseudoterminal and proxies IO with the host.
+
+Stdio contract (set by the Node.js caller):
+    fd 0 (stdin)  → keystrokes forwarded to the PTY
+    fd 1 (stdout) ← screen output forwarded from the PTY
+    fd 2 (stderr) ← bridge script errors only
+    fd 3 (cmdio)  ← resize control frames: "<rows>x<cols>\\\\n"
+
+Environment:
+    PTY_COLS / PTY_ROWS  initial xterm size (default 80x24)
+    CLAUDE_IDE_CMD       optional command to run inside a login shell
+                         (e.g. "claude"); if unset, a plain login+interactive
+                         shell is launched.
+
+Lifecycle: when the child exits, the PTY master returns EOF and this script
+exits with the child's status. The Node side detaches the leaf on exit.
 """
 
-import errno
-import fcntl
-import json
+from __future__ import annotations
+
 import os
-import pty
-import selectors
 import signal
-import struct
+import sys
+from fcntl import ioctl
+from pty import fork
+from selectors import EVENT_READ, DefaultSelector
 from struct import pack
 from termios import TIOCSWINSZ
-import sys
+
+_CHUNK = 4096
+_STDIN = 0
+_STDOUT = 1
+_CMDIO = 3
+
+
+def _write_all(fd: int, data: bytes) -> None:
+    while data:
+        try:
+            n = os.write(fd, data)
+        except OSError:
+            return
+        data = data[n:]
 
 
 def _apply_winsize(pty_fd: int, rows: int, cols: int, child_pid: int | None = None) -> None:
     try:
-        fcntl.ioctl(pty_fd, TIOCSWINSZ, pack('HHHH', rows, cols, 0, 0))
+        ioctl(pty_fd, TIOCSWINSZ, pack("HHHH", rows, cols, 0, 0))
     except OSError:
         return
-
-    if child_pid is None:
-        return
-
-    try:
-        os.killpg(os.getpgid(child_pid), signal.SIGWINCH)
-    except (OSError, ProcessLookupError):
-        return
-
-
-def _read_int(value: str | None):
-    if not value:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        return None
+    if child_pid is not None:
+        try:
+            os.killpg(os.getpgid(child_pid), signal.SIGWINCH)
+        except (OSError, ProcessLookupError):
+            pass
 
 
 def main() -> int:
-    shell = os.environ.get('SHELL', '/bin/bash')
-    pid, fd = pty.fork()
+    shell = os.environ.get("SHELL", "/bin/zsh")
+    startup_cmd = os.environ.get("CLAUDE_IDE_CMD", "").strip()
+    pid, pty_fd = fork()
 
     if pid == 0:
-        os.execvp(shell, [shell])
+        # Child: load login profile (PATH / pyenv / etc.) then run claude
+        # (or drop into an interactive shell if no command was given).
+        if startup_cmd:
+            os.execvp(shell, [shell, "-l", "-c", startup_cmd])
+        else:
+            os.execvp(shell, [shell, "-l", "-i"])
 
-    selector = selectors.DefaultSelector()
-    sel_stdin = sys.stdin
-    sel_stdout = os.fdopen(fd, 'rb', buffering=0)
-    sel_sigchld = os.pipe()
-
-    os.set_blocking(sel_sigchld[1], False)
-    signal.set_wakeup_fd(sel_sigchld[1])
-    signal.signal(signal.SIGCHLD, lambda *_: None)
-
-    os.killpg(os.getpgid(pid), signal.SIGWINCH)
-
-    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
-        signal.signal(signum, lambda received, _frame: _forward_signal(received, pid))
-
-    initial_cols = _read_int(os.environ.get('COLUMNS')) or 80
-    initial_rows = _read_int(os.environ.get('LINES')) or 24
-    _apply_winsize(fd, initial_rows, initial_cols, pid)
-
-    selector.register(sel_stdin, selectors.EVENT_READ)
-    selector.register(sel_stdout, selectors.EVENT_READ)
-    selector.register(os.fdopen(sel_sigchld[0], 'rb', buffering=0), selectors.EVENT_READ)
-
-    buffered_input = b''
-    while True:
-        for key, _ in selector.select():
-            if key.fileobj is sel_sigchld[0]:
-                try:
-                    os.read(sel_sigchld[0], 8192)
-                except OSError:
-                    pass
-
-                while True:
-                    try:
-                        finished_pid, status = os.waitpid(pid, os.WNOHANG)
-                    except ChildProcessError:
-                        return 0
-                    except OSError:
-                        break
-
-                    if finished_pid != pid:
-                        break
-                    return os.waitstatus_to_exitcode(status)
-
-            elif key.fileobj is sel_stdin:
-                data = sel_stdin.buffer.read(8192) if hasattr(sel_stdin, 'buffer') else sel_stdin.read(8192)
-                if not data:
-                    continue
-
-                buffered_input += data
-                while b'\\n' in buffered_input:
-                    frame, remaining = buffered_input.split(b'\\n', 1)
-                    if frame.startswith(b'{') and frame.endswith(b'}'):
-                        try:
-                            payload = json.loads(frame.decode('utf-8'))
-                        except (json.JSONDecodeError, UnicodeDecodeError):
-                            payload = None
-
-                        if payload and payload.get('type') == 'resize':
-                            cols = payload.get('cols')
-                            rows = payload.get('rows')
-                            if isinstance(cols, int) and isinstance(rows, int):
-                                _apply_winsize(fd, rows, cols, pid)
-                            buffered_input = remaining
-                            break
-                    buffered_input = remaining
-                    try:
-                        os.write(fd, frame + b'\\n')
-                    except OSError:
-                        pass
-
-                if buffered_input and not buffered_input.startswith(b'{'):
-                    try:
-                        os.write(fd, buffered_input)
-                    except OSError:
-                        pass
-                    buffered_input = b''
-
-            elif key.fileobj is sel_stdout:
-                chunk = sel_stdout.read(8192)
-                if not chunk:
-                    return 0
-                sys.stdout.buffer.write(chunk)
-                sys.stdout.buffer.flush()
-
-    return 0
-
-
-def _forward_signal(signal_number: int, child_pid: int) -> None:
+    # Parent: initial winsize before the child starts drawing.
     try:
-        os.killpg(os.getpgid(child_pid), signal_number)
-    except (OSError, ProcessLookupError):
-        return
+        cols = int(os.environ.get("PTY_COLS", "80"))
+        rows = int(os.environ.get("PTY_ROWS", "24"))
+    except ValueError:
+        cols, rows = 80, 24
+    _apply_winsize(pty_fd, rows, cols, pid)
+
+    # Forward host signals to the child process group.
+    def _forward(signum: int, _frame) -> None:
+        try:
+            os.killpg(os.getpgid(pid), signum)
+        except (OSError, ProcessLookupError):
+            pass
+
+    for s in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(s, _forward)
+
+    # fd 3 cmdio is optional — only register it if the parent actually piped it.
+    cmdio_open = True
+    try:
+        os.fstat(_CMDIO)
+    except OSError:
+        cmdio_open = False
+
+    selector = DefaultSelector()
+    selector.register(_STDIN, EVENT_READ)
+    selector.register(pty_fd, EVENT_READ)
+    if cmdio_open:
+        selector.register(_CMDIO, EVENT_READ)
+
+    cmdio_buf = b""
+
+    try:
+        while True:
+            for key, _ in selector.select(timeout=0.1):
+                fd = key.fd
+
+                if fd == _STDIN:
+                    try:
+                        data = os.read(_STDIN, _CHUNK)
+                    except OSError:
+                        data = b""
+                    if not data:
+                        try:
+                            selector.unregister(_STDIN)
+                        except KeyError:
+                            pass
+                        continue
+                    _write_all(pty_fd, data)
+
+                elif fd == pty_fd:
+                    try:
+                        data = os.read(pty_fd, _CHUNK)
+                    except OSError:
+                        data = b""
+                    if not data:
+                        # Child exited and closed the PTY master.
+                        try:
+                            _, status = os.waitpid(pid, 0)
+                            return os.waitstatus_to_exitcode(status)
+                        except (ChildProcessError, OSError):
+                            return 0
+                    _write_all(_STDOUT, data)
+
+                elif fd == _CMDIO:
+                    try:
+                        data = os.read(_CMDIO, _CHUNK)
+                    except OSError:
+                        data = b""
+                    if not data:
+                        try:
+                            selector.unregister(_CMDIO)
+                        except KeyError:
+                            pass
+                        continue
+                    cmdio_buf += data
+                    while b"\\n" in cmdio_buf:
+                        line, cmdio_buf = cmdio_buf.split(b"\\n", 1)
+                        try:
+                            r, c = line.decode("utf-8", "strict").strip().split("x", 1)
+                            _apply_winsize(pty_fd, int(r), int(c), pid)
+                        except (ValueError, UnicodeDecodeError):
+                            pass
+
+            # Reap child if it has exited but PTY hasn't EOF'd yet.
+            try:
+                finished, status = os.waitpid(pid, os.WNOHANG)
+                if finished == pid:
+                    return os.waitstatus_to_exitcode(status)
+            except ChildProcessError:
+                return 0
+            except OSError:
+                pass
+    finally:
+        try:
+            selector.close()
+        except Exception:
+            pass
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     raise SystemExit(main())
 `;

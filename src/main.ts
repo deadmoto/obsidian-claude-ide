@@ -18,7 +18,10 @@ export default class ClaudeIdePlugin extends Plugin {
 
     this.adapter.updateSettings(this.settings);
     this.addSettingTab(new ClaudeIdeSettingTab(this.app, this));
-    this.registerView(TERMINAL_VIEW_TYPE, (leaf) => new TerminalView(leaf));
+    this.registerView(TERMINAL_VIEW_TYPE, (leaf) => new TerminalView(leaf, {
+      getCommand: () => this.settings.claudeCommand,
+      getCwd: () => this.adapter?.getWorkspaceFolderPath() ?? null
+    }));
 
     this.addCommand({
       id: 'open-claude-in-integrated-terminal',
