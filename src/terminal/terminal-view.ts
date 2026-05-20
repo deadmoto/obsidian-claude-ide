@@ -9,13 +9,14 @@ export const TERMINAL_VIEW_TYPE = 'claude-ide-terminal';
 export class TerminalView extends ItemView {
   private terminal: Terminal | null = null;
   private process: ReturnType<typeof spawnPtyProcess> | null = null;
+  private titleFromChild = '';
 
   getViewType(): string {
     return TERMINAL_VIEW_TYPE;
   }
 
   getDisplayText(): string {
-    return 'Claude IDE';
+    return this.titleFromChild || 'Claude IDE';
   }
 
   async onOpen(): Promise<void> {
@@ -41,6 +42,13 @@ export class TerminalView extends ItemView {
     });
 
     this.terminal.attachCustomKeyEventHandler((event) => this.handleTerminalKeyEvent(event as KeyboardEvent));
+    this.terminal.onTitleChange((title) => {
+      this.titleFromChild = (title ?? '').trim();
+      const titleElement = (this as { titleEl?: { setText: (title: string) => void } }).titleEl;
+      if (titleElement) {
+        titleElement.setText(this.getDisplayText());
+      }
+    });
     this.registerDomEvent(container, 'contextmenu', (event) => {
       void this.handleTerminalContextMenu(event);
     });
