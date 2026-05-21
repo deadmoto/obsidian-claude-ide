@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { FileSystemAdapter } from 'obsidian';
 import { EditorStateAdapter } from '../editor/state';
 import { DEFAULT_SETTINGS } from '../settings';
 
@@ -24,7 +25,9 @@ const mkApp = () => {
   const vault = {
     cachedRead: async () => 'cached line',
     getAbstractFileByPath: () => ({ path: 'notes/test.md', extension: 'md' }),
-    getRoot: () => ({ path: '/tmp/vault' })
+    getRoot: () => ({ path: '/tmp/vault' }),
+    // state.ts: getWorkspaceFolderPath does `instanceof FileSystemAdapter`.
+    adapter: new FileSystemAdapter('/tmp/vault')
   } as any;
 
   const app = { vault, workspace } as any;

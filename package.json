@@ -11,9 +11,11 @@
     "build:watch": "node esbuild.config.mjs --watch",
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
-    "test:e2e": "vitest run tests/e2e",
+    "test:e2e": "playwright test",
+    "test:e2e:obsidian": "npm run build && playwright test tests/e2e/playwright-blink.spec.ts",
     "playwright": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:wire-trace": "node scripts/verify-no-error-trace.mjs"
   },
   "dependencies": {
     "obsidian": "^1.6.7",
@@ -22,6 +24,7 @@
     "xterm-addon-fit": "^0.8.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^24.7.2",
     "@types/ws": "^8.5.12",
     "esbuild": "^0.25.0",

@@ -66,5 +66,20 @@ export class TFile {
   path = '';
 }
 
+export class FileView {
+  file: any;
+}
+
+export class FileSystemAdapter {
+  private base: string;
+  constructor(base = '/tmp/mock-vault') {
+    this.base = base;
+  }
+  getBasePath(): string {
+    return this.base;
+  }
+}
+
 export interface App {}
 export type WorkspaceLeaf = any;
+export const Platform = { isMacOS: process.platform === 'darwin' };

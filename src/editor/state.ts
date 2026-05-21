@@ -110,14 +110,17 @@ export class EditorStateAdapter {
     // {start,end} range is present. Always emit at least a 1-character range
     // — this is what populates ideSelection.filePath and drives the
     // "⧉ In file.md" display even when no text is selected.
+    //
+    // Omit `text` when no text is selected — sending text: '' alongside the
+    // synthetic range made the hook clear ideSelection on the post-response
+    // compensation push, producing the "blink" on tab switches.
     if (!editor || typeof editor.getSelection !== 'function') {
       return {
         filePath,
         selection: {
           start: { line: 0, character: 0 },
           end:   { line: 0, character: 1 }
-        },
-        text: ''
+        }
       };
     }
 
@@ -125,14 +128,12 @@ export class EditorStateAdapter {
     const from = this.normalizeCursor(editor, 'from');
 
     if (!text) {
-      // Cursor only — send a 1-char range at the cursor so the hook accepts it.
       return {
         filePath,
         selection: {
           start: from,
           end:   { line: from.line, character: from.character + 1 }
-        },
-        text: ''
+        }
       };
     }
 
