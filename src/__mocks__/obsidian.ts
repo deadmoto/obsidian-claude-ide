@@ -71,10 +71,9 @@ export class FileView {
 }
 
 export class FileSystemAdapter {
-  private base: string;
-  constructor(base = '/tmp/mock-vault') {
-    this.base = base;
-  }
+  // Match upstream signature (no constructor args). Tests that need a
+  // specific base path can mutate this property directly after construction.
+  base = '/tmp/vault';
   getBasePath(): string {
     return this.base;
   }

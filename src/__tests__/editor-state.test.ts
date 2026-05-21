@@ -27,7 +27,7 @@ const mkApp = () => {
     getAbstractFileByPath: () => ({ path: 'notes/test.md', extension: 'md' }),
     getRoot: () => ({ path: '/tmp/vault' }),
     // state.ts: getWorkspaceFolderPath does `instanceof FileSystemAdapter`.
-    adapter: new FileSystemAdapter('/tmp/vault')
+    adapter: new FileSystemAdapter()
   } as any;
 
   const app = { vault, workspace } as any;

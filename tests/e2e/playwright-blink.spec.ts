@@ -24,7 +24,7 @@
 
 import { test, expect, chromium } from '@playwright/test';
 import {
-  writeFile, unlink, readFile, readdir, stat, mkdir, copyFile, rm,
+  writeFile, readFile, readdir, stat, mkdir, copyFile, rm,
 } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
@@ -45,9 +45,6 @@ const PLUGIN_DIR   = 'obsidian-claude-ide'; // dir name under .obsidian/plugins/
 const REPO_ROOT       = join(__dirname, '..', '..');
 const BUILT_MAIN_JS   = join(REPO_ROOT, 'dist', 'main.js');
 const BUILT_MANIFEST  = join(REPO_ROOT, 'manifest.json');
-
-const OBSIDIAN_GLOBAL_CFG =
-  join(homedir(), 'Library/Application Support/obsidian/obsidian.json');
 
 const FILE_A = 'note-a.md';
 const FILE_B = 'note-b.md';
@@ -79,26 +76,25 @@ async function createTestVault(): Promise<string> {
   return vaultDir;
 }
 
-interface ObsidianGlobalCfg {
-  vaults: Record<string, { path: string; ts: number; open?: boolean }>;
-  [k: string]: unknown;
-}
-
-async function registerVaultAndGetOriginal(vaultDir: string): Promise<string> {
-  const original = await readFile(OBSIDIAN_GLOBAL_CFG, 'utf8');
-  const cfg: ObsidianGlobalCfg = JSON.parse(original);
-  for (const v of Object.values(cfg.vaults)) { delete v.open; }
-  const id = randomBytes(8).toString('hex');
-  // `trusted: true` tells Obsidian we already trust the vault author so the
-  // first-open dialog doesn't appear. Cast through unknown to keep the
-  // local ObsidianGlobalCfg interface narrow.
-  cfg.vaults[id] = ({ path: vaultDir, ts: Date.now(), open: true, trusted: true } as unknown) as ObsidianGlobalCfg['vaults'][string];
-  await writeFile(OBSIDIAN_GLOBAL_CFG, JSON.stringify(cfg, null, 4));
-  return original;
-}
-
-async function restoreGlobalCfg(original: string): Promise<void> {
-  await writeFile(OBSIDIAN_GLOBAL_CFG, original);
+// Build a complete --user-data-dir for an isolated Obsidian process.
+// Returns the dir path. The test passes --user-data-dir=<this> on spawn,
+// which gives the second Obsidian its own Electron lock, its own
+// obsidian.json, and its own cache — independent of the user's real
+// Obsidian, so the test can run while the user keeps their Obsidian open.
+async function prepareUserDataDir(vaultDir: string): Promise<string> {
+  const userDataDir = join(tmpdir(), `obsidian-e2e-userdata-${randomBytes(4).toString('hex')}`);
+  await mkdir(userDataDir, { recursive: true });
+  const cfg = {
+    vaults: {
+      [randomBytes(8).toString('hex')]: {
+        path: vaultDir,
+        ts: Date.now(),
+        open: true
+      }
+    }
+  };
+  await writeFile(join(userDataDir, 'obsidian.json'), JSON.stringify(cfg, null, 4));
+  return userDataDir;
 }
 
 // ── Bridge discovery ──────────────────────────────────────────────────────────
@@ -224,42 +220,30 @@ function connectObserver(bridge: BridgeInfo): Promise<Observer> {
   });
 }
 
-// ── Guard: refuse to run with another Obsidian open ───────────────────────────
-
-async function ensureObsidianClosed(): Promise<void> {
-  const lockDir = join(homedir(), '.claude/ide');
-  try {
-    for (const f of (await readdir(lockDir)).filter(x => x.endsWith('.lock'))) {
-      const d = JSON.parse(await readFile(join(lockDir, f), 'utf8'));
-      if (d.ideName !== 'Obsidian') continue;
-      try {
-        process.kill(d.pid, 0);
-        throw new Error('Obsidian is already running — close it before running Playwright E2E.');
-      } catch (e: any) {
-        if (typeof e.message === 'string' && e.message.startsWith('Obsidian is')) throw e;
-      }
-    }
-  } catch (e: any) {
-    if (typeof e.message === 'string' && e.message.startsWith('Obsidian is')) throw e;
-  }
-}
-
 // ── Test ──────────────────────────────────────────────────────────────────────
 
 test.setTimeout(90_000);
 
 test('tab switches produce no JSON-RPC error frames and templates/list returns empty', async () => {
   const launchTime = Date.now();
-  await ensureObsidianClosed();
 
-  const vaultDir    = await createTestVault();
-  const originalCfg = await registerVaultAndGetOriginal(vaultDir);
+  const vaultDir     = await createTestVault();
+  const userDataDir  = await prepareUserDataDir(vaultDir);
   let proc: ChildProcess | null = null;
 
   try {
-    proc = spawn(OBSIDIAN_BIN, [`--remote-debugging-port=${CDP_PORT}`], {
-      stdio: 'ignore', detached: false,
-    });
+    // --user-data-dir gives this Obsidian its own Electron single-instance
+    // lock + obsidian.json so it runs independently from any other Obsidian
+    // the user has open. CDP port must be distinct from any port a parallel
+    // Obsidian is already using.
+    proc = spawn(
+      OBSIDIAN_BIN,
+      [
+        `--remote-debugging-port=${CDP_PORT}`,
+        `--user-data-dir=${userDataDir}`,
+      ],
+      { stdio: 'ignore', detached: false },
+    );
 
     // 1. Wait for CDP endpoint.
     const cdpDeadline = Date.now() + 15_000;
@@ -378,7 +362,7 @@ test('tab switches produce no JSON-RPC error frames and templates/list returns e
     proc?.kill();
     // Give Obsidian a moment to exit cleanly so the lock file is gone.
     await new Promise(r => setTimeout(r, 500));
-    await restoreGlobalCfg(originalCfg);
-    await rm(vaultDir, { recursive: true, force: true });
+    await rm(vaultDir,    { recursive: true, force: true });
+    await rm(userDataDir, { recursive: true, force: true });
   }
 });
