@@ -39,8 +39,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const OBSIDIAN_BIN = '/Applications/Obsidian.app/Contents/MacOS/Obsidian';
 const CDP_PORT     = 19_225;
-const PLUGIN_ID    = 'claude-ide';          // manifest id (what community-plugins.json lists)
-const PLUGIN_DIR   = 'obsidian-claude-ide'; // dir name under .obsidian/plugins/ (matches deploy)
+const PLUGIN_ID    = 'obsidian-claude-ide'; // manifest id (matches dir name)
+const PLUGIN_DIR   = 'obsidian-claude-ide';
 
 const REPO_ROOT       = join(__dirname, '..', '..');
 const BUILT_MAIN_JS   = join(REPO_ROOT, 'dist', 'main.js');
@@ -356,6 +356,18 @@ test('tab switches produce no JSON-RPC error frames and templates/list returns e
     expect(
       newSelChanges,
       `focusing a non-markdown leaf should not emit selection_changed but got: ${newSelChanges.map(f => f.raw).join('\n')}`
+    ).toHaveLength(0);
+
+    // (f) No notifications/resources/list_changed during tab switches.
+    //     Claude clears ideSelection on list_changed and the trailing
+    //     selection_changed races with the reset — producing the original
+    //     "appears then disappears" flicker. Regression guard.
+    const listChanges = allFrames.filter(
+      f => f.dir === 'in' && f.parsed?.method === 'notifications/resources/list_changed'
+    );
+    expect(
+      listChanges,
+      `tab switches must NOT emit notifications/resources/list_changed but got: ${listChanges.map(f => f.raw).join('\n')}`
     ).toHaveLength(0);
 
   } finally {

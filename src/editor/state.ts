@@ -225,10 +225,15 @@ export class EditorStateAdapter {
 
     if (currentPath !== this.lastResourcePath) {
       this.lastResourcePath = currentPath;
-      this.callbacks?.onResourcesListChanged?.();
-      // Do NOT emit selection_changed(null) here — it would wipe Claude's
-      // ideSelection. The signature check below will emit the new selection
-      // payload (or null when the file is genuinely closed) on its own.
+      // Deliberately do NOT fire notifications/resources/list_changed on
+      // tab switches. Verified empirically (2026-05): Claude Code resets
+      // ideSelection on list_changed, and the trailing selection_changed
+      // pushes for the new file race with that reset — producing the
+      // "appears then quickly disappears" flicker of "⧉ In file.md" on
+      // every tab switch. selection_changed alone carries the new
+      // filePath, which is enough for Claude's IDE indicator. Claude can
+      // still pull the up-to-date resource list on demand via resources/list
+      // or fetch the current file via the getCurrentFile tool.
     }
 
     const selection = this.getSelectionPayload();
