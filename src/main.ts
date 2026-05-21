@@ -169,10 +169,6 @@ export default class ClaudeIdePlugin extends Plugin {
       // No need to re-emit here — duplicates cause the indicator to blink.
 
       this.notify(`bridge started on :${port}`);
-
-      if (this.settings.autoLaunchClaudeWithIde) {
-        this.log('autoLaunchClaudeWithIde is enabled but not yet implemented.');
-      }
     } catch (error) {
       const port = bridge.port;
       this.notify(`bridge failed to start — ${(error as Error).message ?? String(error)}`, 'error');

@@ -4,8 +4,7 @@ import type ClaudeIdePlugin from './main';
 export interface ClaudeIdeSettings {
   claudeCommand: string;
   autoStartBridge: boolean;
-  autoLaunchClaudeWithIde: boolean;
-  autoOpenTerminal: 'disabled' | 'right-split' | 'bottom-split' | 'new-tab';
+  autoOpenTerminal: 'disabled' | 'bottom-split' | 'right-split' | 'new-tab';
   shareUnsavedBuffer: boolean;
   maxFileBytes: number;
   debugLogging: boolean;
@@ -14,7 +13,6 @@ export interface ClaudeIdeSettings {
 export const DEFAULT_SETTINGS: ClaudeIdeSettings = {
   claudeCommand: 'claude',
   autoStartBridge: true,
-  autoLaunchClaudeWithIde: false,
   autoOpenTerminal: 'disabled',
   shareUnsavedBuffer: true,
   maxFileBytes: 200000,
@@ -66,26 +64,13 @@ export class ClaudeIdeSettingTab extends PluginSettingTab {
       );
 
     new Setting(containerEl)
-      .setName('Auto-launch Claude with IDE')
-      .setDesc('Not implemented yet in this release.')
-      .addToggle((toggle) =>
-        toggle
-          .setValue(this.plugin.settings.autoLaunchClaudeWithIde)
-          .onChange(async (value) => {
-            this.plugin.settings.autoLaunchClaudeWithIde = value;
-            await this.persist();
-            this.plugin.syncEditorSettings();
-          })
-      );
-
-    new Setting(containerEl)
-      .setName('Auto-open Claude terminal')
-      .setDesc('Open the terminal automatically on plugin load.')
+      .setName('Launch Claude Terminal on Start')
+      .setDesc('Open a Claude terminal pane automatically when the plugin loads.')
       .addDropdown((dropdown) =>
         dropdown
           .addOption('disabled', 'Disabled')
-          .addOption('right-split', 'Right split')
           .addOption('bottom-split', 'Bottom split')
+          .addOption('right-split', 'Right split')
           .addOption('new-tab', 'New tab')
           .setValue(this.plugin.settings.autoOpenTerminal)
           .onChange(async (value) => {
