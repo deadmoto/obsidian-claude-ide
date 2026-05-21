@@ -39,8 +39,12 @@ export default class ClaudeIdePlugin extends Plugin {
         // "⧉ In file.md" while the user types in the terminal.
         const view = leaf?.view;
         if (!(view instanceof MarkdownView) || !view.file) return;
+        // setActiveLeaf → pollState already emits list_changed / selection_changed
+        // via the adapter callbacks. Don't fire bridge.emitResourcesListChanged()
+        // here too — a duplicate triggers two resources/list round-trips in
+        // Claude, and each one briefly resets ideSelection (mU7 hook) before
+        // the trailing selection_changed restores it. That gap is the blink.
         this.adapter?.setActiveLeaf(leaf);
-        this.bridge?.emitResourcesListChanged();
       })
     );
 
@@ -127,7 +131,8 @@ export default class ClaudeIdePlugin extends Plugin {
     const bridge = new WsAdapter(
       {
         authToken: token,
-        workspaceFolder
+        workspaceFolder,
+        debug: this.settings.debugLogging
       },
       adapter,
       (message) => this.log(message)
@@ -159,8 +164,9 @@ export default class ClaudeIdePlugin extends Plugin {
       });
       this.running = true;
 
-      this.bridge.emitResourcesListChanged();
-      this.bridge.emitSelectionChanged(adapter.getSelectionPayload());
+      // startTracking already ran pollState and fired the initial
+      // list_changed + selection_changed through the adapter callbacks.
+      // No need to re-emit here — duplicates cause the indicator to blink.
 
       this.notify(`bridge started on :${port}`);
 

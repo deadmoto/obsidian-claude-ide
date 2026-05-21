@@ -105,4 +105,38 @@ describe('WsAdapter integration', () => {
       expect.arrayContaining(['getCurrentFile', 'getWorkspaceFolders', 'openFile'])
     );
   });
+
+  it('answers resources/templates/list and prompts/list with empty arrays, errors on unknown methods', async () => {
+    const port = await adapter.start();
+
+    const ask = (id: number, method: string) =>
+      new Promise<any>((resolve, reject) => {
+        const s = new WebSocket(`ws://127.0.0.1:${port}`, 'mcp', {
+          headers: { 'x-claude-code-ide-authorization': 'token-1' }
+        });
+        s.on('open', () => s.send(JSON.stringify({ jsonrpc: '2.0', id, method })));
+        s.on('message', (msg) => {
+          const parsed = JSON.parse(msg.toString());
+          if (parsed.id === id) {
+            resolve(parsed);
+            s.close();
+          }
+        });
+        s.on('error', reject);
+      });
+
+    const templates = await ask(10, 'resources/templates/list');
+    expect(templates.error).toBeUndefined();
+    expect(templates.result).toEqual({ resourceTemplates: [] });
+
+    const prompts = await ask(11, 'prompts/list');
+    expect(prompts.error).toBeUndefined();
+    expect(prompts.result).toEqual({ prompts: [] });
+
+    const bogus = await ask(12, 'frobnicate/foo');
+    expect(bogus.result).toBeUndefined();
+    expect(bogus.error).toBeDefined();
+    expect(bogus.error.code).toBe(-32601);
+    expect(bogus.error.message).toMatch(/Unsupported method/);
+  });
 });

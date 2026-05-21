@@ -30,6 +30,7 @@ interface ToolDescription {
 export interface BridgeConfig {
   authToken: string;
   workspaceFolder: string;
+  debug?: boolean;
 }
 
 const TOOL_LIST: ToolDescription[] = [
@@ -134,14 +135,12 @@ export class WsAdapter {
   }
 
   emitResourcesListChanged(): void {
-    const current = this.editorState.getCurrentFilePath();
-    const payload = {
-      uris: current ? [`file://${this.config.workspaceFolder}/${current.replace(/^\//, '')}`] : []
-    };
+    // MCP spec: notifications/resources/list_changed carries no params.
+    // The extra `uris` field A used to send wasn't standard and may have
+    // confused Claude's mU7 hook into resetting ideSelection.
     this.broadcast({
       jsonrpc: '2.0',
-      method: 'notifications/resources/list_changed',
-      params: payload
+      method: 'notifications/resources/list_changed'
     });
   }
 
@@ -173,6 +172,7 @@ export class WsAdapter {
   }
 
   private async onMessage(socket: WebSocket, payload: string): Promise<void> {
+    if (this.config.debug) console.log('[claude-ide] ←', payload);
     let message: MCPRequest;
     try {
       message = JSON.parse(payload) as MCPRequest;
@@ -228,6 +228,15 @@ export class WsAdapter {
         break;
       case 'resources/unsubscribe':
         this.handleSubscribe(socket, message, false);
+        break;
+      case 'resources/templates/list':
+        // Claude calls this after every resources/list. Returning a JSON-RPC
+        // error here caused its MCP client to invalidate ideSelection — that
+        // was the "blink" on tab switches. Reply with an empty list instead.
+        this.sendResponse(socket, message.id, { resourceTemplates: [] });
+        break;
+      case 'prompts/list':
+        this.sendResponse(socket, message.id, { prompts: [] });
         break;
       default:
         this.sendError(socket, message.id, `Unsupported method: ${message.method}`);
@@ -365,11 +374,16 @@ export class WsAdapter {
     });
   }
 
-  private sendError(socket: WebSocket, id: MessageId, message: string): void {
+  private sendError(socket: WebSocket, id: MessageId, message: string, code = -32601): void {
+    // -32601 (Method not found) is the JSON-RPC standard for unimplemented
+    // methods. -32600 (Invalid Request) is reserved for malformed envelopes
+    // and was misused here — some MCP clients invalidate IDE state when they
+    // see -32600 on a routine probe, which was the source of the tab-switch
+    // blink for resources/templates/list.
     this.sendTo(socket, {
       jsonrpc: '2.0',
       id,
-      error: { code: -32600, message }
+      error: { code, message }
     });
   }
 
@@ -377,11 +391,14 @@ export class WsAdapter {
     if (socket.readyState !== WebSocket.OPEN) {
       return;
     }
-    socket.send(JSON.stringify(msg));
+    const serialized = JSON.stringify(msg);
+    if (this.config.debug) console.log('[claude-ide] →', serialized);
+    socket.send(serialized);
   }
 
   private broadcast(msg: unknown): void {
     const serialized = JSON.stringify(msg);
+    if (this.config.debug) console.log('[claude-ide] →(broadcast)', serialized);
     for (const client of this.clients) {
       if (client.readyState === WebSocket.OPEN) {
         client.send(serialized);
