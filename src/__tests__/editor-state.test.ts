@@ -53,8 +53,9 @@ describe('EditorStateAdapter', () => {
     const adapter = new EditorStateAdapter(app as any, DEFAULT_SETTINGS);
     const selection = adapter.getSelectionPayload();
     expect(selection).not.toBeNull();
-    expect(selection?.selection?.start).toMatchObject({ line: 2, character: 1 });
-    expect(selection?.selection?.end).toMatchObject({ line: 2, character: 6 });
+    // 0-indexed to match CM6/LSP/VSCode wire conventions.
+    expect(selection?.selection?.start).toMatchObject({ line: 1, character: 0 });
+    expect(selection?.selection?.end).toMatchObject({ line: 1, character: 5 });
     expect(selection?.text).toBe('line2');
   });
 });

@@ -162,10 +162,10 @@ await request('resources/list');
 await request('resources/templates/list'); // the fixed path
 await request('prompts/list');             // the fixed path
 
-// Simulate a tab switch: change the stub's active file and fire the broadcasts
-// the plugin would emit when Obsidian's workspace state changes.
+// Simulate a tab switch: change the stub's active file and fire what the
+// plugin emits on active-leaf-change (synthetic 1-char selection_changed —
+// no list_changed, that's the post-fix behavior since 2026-05).
 activeFile = fileB;
-adapter.emitResourcesListChanged();
 adapter.emitSelectionChanged(editorStub.getSelectionPayload());
 
 // Repeat the post-switch poll Claude does (resources/list +

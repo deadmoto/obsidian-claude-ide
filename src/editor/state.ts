@@ -3,48 +3,23 @@ import { CurrentFilePayload, SelectionPayload } from '../bridge/types';
 import { ClaudeIdeSettings } from '../settings';
 import path from 'node:path';
 
-export type EditorStateCallbacks = {
-  onResourcesListChanged?: () => void;
-  onSelectionChanged?: (payload: SelectionPayload | null) => void;
-  onResourceUpdated?: (uri: string) => void;
-};
-
+/**
+ * Read-only view onto Obsidian's editor / vault state. Used by the WS adapter
+ * for on-demand snapshots (tool calls, resource reads) and by main.ts to
+ * compute payloads for event-driven selection_changed pushes.
+ *
+ * No background polling. All notification firing is owned by main.ts which
+ * subscribes to active-leaf-change, CM6 selection updates, and editor-change
+ * events directly.
+ */
 export class EditorStateAdapter {
   private activeLeaf: WorkspaceLeaf | null = null;
   private cache: Map<string, { content: string; timestamp: number; dirty: boolean }> = new Map();
-  private watcher: ReturnType<typeof setInterval> | null = null;
-  private lastResourcePath: string | null = null;
-  private lastSelectionSignature: string = 'null';
-  private callbacks: EditorStateCallbacks | null = null;
 
   constructor(private readonly app: App, private readonly settings: ClaudeIdeSettings) {}
 
-  startTracking(callbacks?: EditorStateCallbacks): void {
-    if (callbacks) {
-      this.callbacks = {
-        onResourcesListChanged: callbacks.onResourcesListChanged,
-        onSelectionChanged: callbacks.onSelectionChanged,
-        onResourceUpdated: callbacks.onResourceUpdated
-      };
-    }
-
-    if (this.watcher) {
-      return;
-    }
-    this.watcher = setInterval(() => this.pollState(), 250);
-    this.pollState();
-  }
-
-  stopTracking(): void {
-    if (this.watcher) {
-      clearInterval(this.watcher);
-      this.watcher = null;
-    }
-  }
-
   setActiveLeaf(leaf: WorkspaceLeaf | null): void {
     this.activeLeaf = leaf;
-    this.pollState();
   }
 
   updateSettings(settings: ClaudeIdeSettings): void {
@@ -60,6 +35,20 @@ export class EditorStateAdapter {
     }
     const diskContent = await this.app.vault.cachedRead(file);
     this.cache.set(file.path, { content: diskContent, timestamp: Date.now(), dirty: false });
+  }
+
+  /**
+   * Update the cache for a specific file from its current on-disk (or live
+   * buffer, when sharing unsaved edits) contents. Called from main.ts on
+   * editor-change so resource subscribers see fresh content.
+   */
+  async refreshCache(file: TFile): Promise<void> {
+    const view = this.getCurrentMarkdownView();
+    const live = this.settings.shareUnsavedBuffer && view?.file?.path === file.path
+      ? (view as any).editor?.getValue?.()
+      : null;
+    const content = typeof live === 'string' ? live : await this.app.vault.cachedRead(file);
+    this.cache.set(file.path, { content, timestamp: Date.now(), dirty: typeof live === 'string' });
   }
 
   getCurrentFile(): CurrentFilePayload | null {
@@ -86,6 +75,10 @@ export class EditorStateAdapter {
     return current?.file.path || null;
   }
 
+  getCurrentMarkdownTFile(): TFile | null {
+    return this.getCurrentMarkdownFile()?.file ?? null;
+  }
+
   getWorkspaceFolderPath(): string | null {
     // Absolute filesystem path of the vault. vault.getRoot().path returns "/"
     // (the vault-relative root), which breaks both the terminal cwd and
@@ -97,6 +90,20 @@ export class EditorStateAdapter {
     return null;
   }
 
+  /**
+   * Synchronous snapshot of the current selection state. Used by the WS
+   * adapter for compensation pushes after initialize / tools/list /
+   * resources/list (mU7 hook re-population).
+   *
+   * Claude Code's mU7 hook ignores selection_changed unless a real
+   * {start,end} range is present. Always emit at least a 1-character range
+   * so ideSelection.filePath is populated, driving the "⧉ In file.md"
+   * display even when no text is selected.
+   *
+   * Omit `text` when no text is selected — sending text: '' alongside the
+   * synthetic range made the hook clear ideSelection on the post-response
+   * compensation push, producing the "blink" on tab switches.
+   */
   getSelectionPayload(): SelectionPayload | null {
     const current = this.getCurrentMarkdownView();
     if (!current || !current.file) {
@@ -106,22 +113,8 @@ export class EditorStateAdapter {
     const editor = (current as any).editor;
     const filePath = this.resolveAbsolutePath(current.file.path);
 
-    // Claude Code's mU7 hook ignores selection_changed unless a real
-    // {start,end} range is present. Always emit at least a 1-character range
-    // — this is what populates ideSelection.filePath and drives the
-    // "⧉ In file.md" display even when no text is selected.
-    //
-    // Omit `text` when no text is selected — sending text: '' alongside the
-    // synthetic range made the hook clear ideSelection on the post-response
-    // compensation push, producing the "blink" on tab switches.
     if (!editor || typeof editor.getSelection !== 'function') {
-      return {
-        filePath,
-        selection: {
-          start: { line: 0, character: 0 },
-          end:   { line: 0, character: 1 }
-        }
-      };
+      return this.synthSelectionPayload(filePath);
     }
 
     const text = editor.getSelection?.() || '';
@@ -142,6 +135,26 @@ export class EditorStateAdapter {
       filePath,
       selection: { start: from, end: to },
       text
+    };
+  }
+
+  /**
+   * Synthetic 1-char selection at (0,0). Used by main.ts on active-leaf-change
+   * to populate ideSelection with the new file's path without claiming a
+   * specific cursor position — the CM6 listener will follow up with real
+   * coords once the user actually moves the cursor in the new view.
+   */
+  buildFileChangedPayload(file: TFile): SelectionPayload {
+    return this.synthSelectionPayload(this.resolveAbsolutePath(file.path));
+  }
+
+  private synthSelectionPayload(filePath: string): SelectionPayload {
+    return {
+      filePath,
+      selection: {
+        start: { line: 0, character: 0 },
+        end:   { line: 0, character: 1 }
+      }
     };
   }
 
@@ -177,7 +190,6 @@ export class EditorStateAdapter {
     }
 
     (await this.app.workspace.getLeaf(true) as WorkspaceLeaf).openFile?.(file);
-    this.pollState();
     const content = await this.app.vault.cachedRead(file);
     this.cache.set(file.path, { content, timestamp: Date.now(), dirty: false });
 
@@ -189,6 +201,10 @@ export class EditorStateAdapter {
       isDirty: false,
       timestamp: new Date().toISOString()
     };
+  }
+
+  resolveFileUri(filePath: string): string {
+    return `file://${this.resolveAbsolutePath(filePath)}`;
   }
 
   private getCurrentMarkdownView(): MarkdownView | null {
@@ -219,45 +235,6 @@ export class EditorStateAdapter {
     return { file: view.file, isDirty: isDirty || Boolean(cache && cache.dirty) };
   }
 
-  private pollState(): void {
-    const current = this.getCurrentMarkdownFile();
-    const currentPath = current?.file.path ?? null;
-
-    if (currentPath !== this.lastResourcePath) {
-      this.lastResourcePath = currentPath;
-      // Deliberately do NOT fire notifications/resources/list_changed on
-      // tab switches. Verified empirically (2026-05): Claude Code resets
-      // ideSelection on list_changed, and the trailing selection_changed
-      // pushes for the new file race with that reset — producing the
-      // "appears then quickly disappears" flicker of "⧉ In file.md" on
-      // every tab switch. selection_changed alone carries the new
-      // filePath, which is enough for Claude's IDE indicator. Claude can
-      // still pull the up-to-date resource list on demand via resources/list
-      // or fetch the current file via the getCurrentFile tool.
-    }
-
-    const selection = this.getSelectionPayload();
-    const signature = selection ? JSON.stringify(selection) : 'null';
-    if (signature !== this.lastSelectionSignature) {
-      this.lastSelectionSignature = signature;
-      this.callbacks?.onSelectionChanged?.(selection);
-    }
-
-    if (current && current.file.path) {
-      const content = this.getCurrentContent(current.file);
-      const cache = this.cache.get(current.file.path);
-      const isDirty = current.isDirty;
-      if (!cache || cache.content !== content || cache.dirty !== isDirty) {
-        this.cache.set(current.file.path, { content, timestamp: Date.now(), dirty: isDirty });
-        this.callbacks?.onResourceUpdated?.(this.resolveFileUri(current.file.path));
-      }
-    }
-  }
-
-  private resolveFileUri(filePath: string): string {
-    return `file://${this.resolveAbsolutePath(filePath)}`;
-  }
-
   private resolveAbsolutePath(relativePath: string): string {
     const root = this.getWorkspaceFolderPath();
     if (!root) {
@@ -274,10 +251,12 @@ export class EditorStateAdapter {
       return { line: 0, character: 0 };
     }
 
+    // Obsidian's Editor API is 0-indexed and we keep it that way to match
+    // CM6 / LSP / VSCode conventions on the wire.
     const cursor = editor.getCursor(kind) || { line: 0, ch: 0 };
     return {
-      line: cursor.line + 1,
-      character: cursor.ch + 1
+      line: cursor.line,
+      character: cursor.ch
     };
   }
 

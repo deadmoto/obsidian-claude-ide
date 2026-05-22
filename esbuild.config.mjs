@@ -7,7 +7,14 @@ const watch = process.argv.includes('--watch');
 const common = {
   entryPoints: ['src/main.ts'],
   bundle: true,
-  external: ['obsidian', 'node-pty'],
+  external: [
+    'obsidian',
+    'node-pty',
+    // Obsidian's renderer provides these CM6 modules at runtime; bundling
+    // would conflict with Obsidian's own copies.
+    '@codemirror/view',
+    '@codemirror/state'
+  ],
   platform: 'node',
   target: 'node18',
   format: 'cjs',

@@ -1,5 +1,6 @@
 import * as crypto from 'node:crypto';
-import { MarkdownView, Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { Editor, MarkdownView, Notice, Plugin, TFile, WorkspaceLeaf } from 'obsidian';
+import { EditorView } from '@codemirror/view';
 import { cleanStaleLocks, deleteLockFile, writeLockFile } from './bridge/discovery';
 import { EditorStateAdapter } from './editor/state';
 import { WsAdapter } from './bridge/ws-adapter';
@@ -11,11 +12,13 @@ export default class ClaudeIdePlugin extends Plugin {
   private bridge: WsAdapter | null = null;
   private adapter: EditorStateAdapter | null = null;
   private running = false;
+  /** Last filePath we've emitted selection_changed for. Guards against rapid
+   *  no-op leaf-change events spamming the bridge. */
+  private lastNotifiedFilePath = '';
 
   async onload(): Promise<void> {
     await this.loadSettings();
     this.adapter = new EditorStateAdapter(this.app, this.settings);
-
     this.adapter.updateSettings(this.settings);
     this.addSettingTab(new ClaudeIdeSettingTab(this.app, this));
     this.registerView(TERMINAL_VIEW_TYPE, (leaf) => new TerminalView(leaf, {
@@ -31,6 +34,21 @@ export default class ClaudeIdePlugin extends Plugin {
       }
     });
 
+    // ── File / cursor tracking ────────────────────────────────────────────────
+    //
+    // Three event sources drive selection_changed pushes:
+    //
+    //   1. active-leaf-change on a MarkdownView → synthetic 1-char range push
+    //      to populate ideSelection.filePath with the new file. Guarded by
+    //      lastNotifiedFilePath so rapid focus shuffles don't spam.
+    //   2. CM6 EditorView.updateListener → real (line, character) coords on
+    //      every selectionSet (cursor click, arrow key, drag-select).
+    //   3. editor-change → refresh content cache; emit resource_updated for
+    //      subscribed URIs so Claude sees live edits to the file body.
+    //
+    // No background polling. All three fire synchronously off Obsidian's own
+    // events — no 250ms latency, no battery wakeups, no signature dedup races.
+
     this.registerEvent(
       (this.app.workspace as any).on('active-leaf-change', (leaf: WorkspaceLeaf | null) => {
         // Only react when focus lands on a real markdown view. Otherwise
@@ -39,12 +57,58 @@ export default class ClaudeIdePlugin extends Plugin {
         // "⧉ In file.md" while the user types in the terminal.
         const view = leaf?.view;
         if (!(view instanceof MarkdownView) || !view.file) return;
-        // setActiveLeaf → pollState already emits list_changed / selection_changed
-        // via the adapter callbacks. Don't fire bridge.emitResourcesListChanged()
-        // here too — a duplicate triggers two resources/list round-trips in
-        // Claude, and each one briefly resets ideSelection (mU7 hook) before
-        // the trailing selection_changed restores it. That gap is the blink.
         this.adapter?.setActiveLeaf(leaf);
+        this.notifyFileChanged(view.file);
+      })
+    );
+
+    this.registerEditorExtension([
+      EditorView.updateListener.of((update) => {
+        if (!update.selectionSet) return;
+        if (!this.running || !this.bridge) return;
+        const adapter = this.adapter;
+        if (!adapter) return;
+        const file = adapter.getCurrentMarkdownTFile();
+        if (!file) return;
+
+        const sel = update.state.selection.main;
+        const fromLine = update.state.doc.lineAt(sel.from);
+        const filePath = adapter.resolveFileUri(file.path).replace(/^file:\/\//, '');
+
+        if (sel.empty) {
+          const line = fromLine.number - 1;       // CM6 is 1-indexed → 0-indexed
+          const character = sel.head - fromLine.from;
+          this.bridge.emitSelectionChanged({
+            filePath,
+            selection: {
+              start: { line, character },
+              end:   { line, character: character + 1 }
+            }
+          });
+        } else {
+          const toLine = update.state.doc.lineAt(sel.to);
+          const text = update.state.sliceDoc(sel.from, sel.to);
+          this.bridge.emitSelectionChanged({
+            filePath,
+            selection: {
+              start: { line: fromLine.number - 1, character: sel.from - fromLine.from },
+              end:   { line: toLine.number - 1,   character: sel.to   - toLine.from }
+            },
+            text
+          });
+        }
+      })
+    ]);
+
+    this.registerEvent(
+      (this.app.workspace as any).on('editor-change', (_editor: Editor, info: { file?: TFile }) => {
+        if (!this.running || !this.bridge || !this.adapter) return;
+        const file = info?.file;
+        if (!(file instanceof TFile)) return;
+        // Refresh content cache so getCurrentFile snapshots include unsaved
+        // edits, then nudge any subscribed resource consumer.
+        this.adapter.refreshCache(file).catch(() => undefined);
+        this.bridge.emitResourceUpdated(this.adapter.resolveFileUri(file.path));
       })
     );
 
@@ -61,6 +125,14 @@ export default class ClaudeIdePlugin extends Plugin {
     if (this.settings.autoOpenTerminal !== 'disabled') {
       await this.openTerminal(this.settings.autoOpenTerminal);
     }
+  }
+
+  private notifyFileChanged(file: TFile): void {
+    if (!this.running || !this.bridge || !this.adapter) return;
+    const payload = this.adapter.buildFileChangedPayload(file);
+    if (payload.filePath === this.lastNotifiedFilePath) return;
+    this.lastNotifiedFilePath = payload.filePath ?? '';
+    this.bridge.emitSelectionChanged(payload);
   }
 
   private async openTerminal(location: 'right-split' | 'bottom-split' | 'new-tab'): Promise<WorkspaceLeaf> {
@@ -84,11 +156,11 @@ export default class ClaudeIdePlugin extends Plugin {
       throw new Error('Unable to allocate a leaf for terminal');
     }
 
-      await leaf.setViewState({
-        type: TERMINAL_VIEW_TYPE,
-        active: true,
-        state: {}
-      });
+    await leaf.setViewState({
+      type: TERMINAL_VIEW_TYPE,
+      active: true,
+      state: {}
+    });
 
     this.app.workspace.revealLeaf(leaf);
     return leaf;
@@ -151,22 +223,14 @@ export default class ClaudeIdePlugin extends Plugin {
       });
 
       this.bridge = bridge;
-      this.adapter?.startTracking({
-        onResourcesListChanged: () => {
-          this.bridge?.emitResourcesListChanged();
-        },
-        onSelectionChanged: (payload) => {
-          this.bridge?.emitSelectionChanged(payload);
-        },
-        onResourceUpdated: (uri) => {
-          this.bridge?.emitResourceUpdated(uri);
-        }
-      });
       this.running = true;
 
-      // startTracking already ran pollState and fired the initial
-      // list_changed + selection_changed through the adapter callbacks.
-      // No need to re-emit here — duplicates cause the indicator to blink.
+      // Seed Claude with the current file immediately, before any user
+      // gesture, so "⧉ In file.md" shows up on first connection.
+      const initial = this.app.workspace.getActiveViewOfType(MarkdownView);
+      if (initial?.file) {
+        this.notifyFileChanged(initial.file);
+      }
 
       this.notify(`bridge started on :${port}`);
     } catch (error) {
@@ -189,7 +253,7 @@ export default class ClaudeIdePlugin extends Plugin {
     const port = bridge.port;
     this.bridge = null;
     this.running = false;
-    this.ensureAdapter().stopTracking();
+    this.lastNotifiedFilePath = '';
 
     await bridge.stop().catch(() => undefined);
     await deleteLockFile(port).catch(() => undefined);
